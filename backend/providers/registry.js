@@ -7,11 +7,10 @@ const providerCache = new Map();
 
 // Function name mappings for existing providers
 const providerFunctionMap = {
-
   'vixsrc.js': 'getVixsrcStreams',
   'vidzy.js': 'getVidzyStreams',
   'moviebox.js': 'getMovieBoxStreams',
-
+  'castle.js': 'getCastleStreams'
 };
 
 // Stats for debug endpoint

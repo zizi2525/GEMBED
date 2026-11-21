@@ -69,6 +69,8 @@ const EXTRACTOR_CODENAMES = {
   hub: 'Hub',
   dahmer: 'Apex',
   apex: 'Apex',
+  castle: 'Steve',
+  steve: 'Steve',
   showbox: 'Cloud',
   cloud: 'Cloud'
 };

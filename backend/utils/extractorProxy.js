@@ -52,6 +52,8 @@ const PROVIDER_ALIASES = {
   dahmermovies: ['dahmermovies', 'dahmer', 'apex'],
   dahmer: ['dahmermovies', 'dahmer', 'apex'],
   apex: ['dahmermovies', 'dahmer', 'apex'],
+  castle: ['castle', 'steve'],
+  steve: ['castle', 'steve'],
   showbox: ['showbox', 'cloud'],
   cloud: ['showbox', 'cloud']
 };

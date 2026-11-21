@@ -571,6 +571,9 @@ function isStreamProxyEnabledFor(providerName, stream) {
             return false; // Netmirror direct streams
         case 'moviebox':
             return true; // MovieBox CDN requires mobile/Cronet UA; proxied via ts-proxy with range support
+        case 'castle':
+        case 'steve':
+            return false; // Castle direct HLS streams play without proxy
         case 'nxsha':
             return false;
         case 'megaplay':

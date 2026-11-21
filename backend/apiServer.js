@@ -393,7 +393,7 @@ function extractClientGeo(req) {
   const ip = req.query.clientIp ||
     (typeof req.headers['x-client-ip'] === 'string' ? req.headers['x-client-ip'] : null) ||
     (typeof req.headers['x-forwarded-for'] === 'string' ? req.headers['x-forwarded-for'].split(',')[0].trim() : null) ||
-    req.socket.remoteAddress;
+    (req.socket ? req.socket.remoteAddress : null) || '127.0.0.1';
   const country_code = req.query.region || req.headers['x-client-country'] || null;
   const timezone = req.query.timezone || req.headers['x-client-timezone'] || null;
   return { ip, country_code, timezone };

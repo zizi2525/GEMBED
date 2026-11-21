@@ -477,6 +477,8 @@ export const CANONICAL_CODENAMES: Record<string, string> = {
   hub: "Hub",
   dahmer: "Apex",
   apex: "Apex",
+  castle: "Steve",
+  steve: "Steve",
   showbox: "Cloud",
   cloud: "Cloud",
 };
@@ -488,6 +490,7 @@ export function getProviderCanonicalKey(provider: unknown, url: string): string 
   if (p.includes("vixsrc") || p === "ari") return "vixsrc";
   if (p.includes("vidzy") || p === "nova") return "vidzy";
   if (p.includes("vidy") || p.includes("videasy") || p === "titan") return "vidy";
+  if (p.includes("castle") || p === "steve") return "castle";
   if (p.includes("4khdhub") || p === "hub") return "4khdhub";
   if (p.includes("showbox") || p === "cloud") return "showbox";
   if (p.includes("dahmer") || p === "apex") return "dahmer";
@@ -500,6 +503,7 @@ export function getProviderCanonicalKey(provider: unknown, url: string): string 
     if (host.includes("vixsrc")) return "vixsrc";
     if (host.includes("vidzy")) return "vidzy";
     if (host.includes("vidy") || host.includes("wecollege") || host.includes("goldenkite") || host.includes("moon")) return "vidy";
+    if (host.includes("hscow") || host.includes("fcxmb") || host.includes("bhcxy")) return "castle";
     return `host:${host}`;
   } catch {
     return `host:${url.split("/")[2] || "unknown"}`;
@@ -519,6 +523,9 @@ export function getProviderDisplayLabel(providerKey: string, fallback?: string):
     case "vidy":
     case "videasy":
       return "Multi-Language · 4K";
+    case "castle":
+    case "steve":
+      return "HLS · Multi-Language";
     default:
       return fallback || "Multi-quality";
   }
