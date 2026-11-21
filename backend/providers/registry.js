@@ -7,12 +7,11 @@ const providerCache = new Map();
 
 // Function name mappings for existing providers
 const providerFunctionMap = {
-  '4khdhub.js': 'get4KHDHubStreams',
+
   'vixsrc.js': 'getVixsrcStreams',
   'vidzy.js': 'getVidzyStreams',
-  'netmirror.js': 'getNetmirrorStreams',
   'moviebox.js': 'getMovieBoxStreams',
-  'dahmermovies.js': 'getDahmermoviesStreams'
+
 };
 
 // Stats for debug endpoint
