@@ -95,54 +95,84 @@ const apiOriginGuard = validateOriginMiddleware({
 app.use(apiOriginGuard);
 app.use(express.json());
 
-// --- Auth Routes (login before static serving) ---
-app.post('/auth/login', (req, res) => {
-  const { username, password } = req.body || {};
-  const ip = getClientIp(req);
-  const attemptState = canAttempt(ip);
-  if (!attemptState.allowed) {
-    res.setHeader('Retry-After', String(attemptState.retryAfter));
-    return res.status(429).json({ success: false, error: 'TOO_MANY_ATTEMPTS', retryAfter: attemptState.retryAfter });
+// --- Admin Dashboard Security & Gate ---
+const ENABLE_ADMIN_DASHBOARD = config.enableAdminDashboard === true;
+const ADMIN_SECRET_KEY = (config.adminSecretKey || '').trim();
+
+function adminGate(req, res, next) {
+  if (!ENABLE_ADMIN_DASHBOARD) {
+    return res.status(404).json({ success: false, error: 'NOT_FOUND' });
   }
-  if (!username || !password) return res.status(400).json({ success: false, error: 'MISSING_CREDENTIALS' });
-  if (!authenticate(username, password)) {
-    const entry = recordLoginFailure(ip);
-    if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
-      const retryAfter = Math.ceil((entry.lockedUntil - Date.now()) / 1000);
-      res.setHeader('Retry-After', String(retryAfter));
-      return res.status(429).json({ success: false, error: 'LOCKED', retryAfter });
+  if (!ADMIN_SECRET_KEY) {
+    return next();
+  }
+  const queryKey = req.query.key || req.query.admin_key;
+  if (queryKey && queryKey === ADMIN_SECRET_KEY) {
+    res.setHeader('Set-Cookie', `admin_gate_key=${encodeURIComponent(ADMIN_SECRET_KEY)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400`);
+    return next();
+  }
+  const cookies = req.headers.cookie || '';
+  const expectedCookie = `admin_gate_key=${encodeURIComponent(ADMIN_SECRET_KEY)}`;
+  const hasGateCookie = cookies.includes(expectedCookie) || cookies.includes(`admin_gate_key=${ADMIN_SECRET_KEY}`);
+  const headerKey = req.headers['x-admin-key'];
+  if (hasGateCookie || (headerKey && headerKey === ADMIN_SECRET_KEY)) {
+    return next();
+  }
+  return res.status(404).json({ success: false, error: 'NOT_FOUND' });
+}
+
+// --- Auth Routes ---
+if (ENABLE_ADMIN_DASHBOARD) {
+  app.post('/auth/login', adminGate, (req, res) => {
+    const { username, password } = req.body || {};
+    const ip = getClientIp(req);
+    const attemptState = canAttempt(ip);
+    if (!attemptState.allowed) {
+      res.setHeader('Retry-After', String(attemptState.retryAfter));
+      return res.status(429).json({ success: false, error: 'TOO_MANY_ATTEMPTS', retryAfter: attemptState.retryAfter });
     }
-    return res.status(401).json({ success: false, error: 'INVALID_CREDENTIALS', remaining: Math.max(0, MAX_ATTEMPTS_WINDOW - entry.count) });
-  }
-  recordLoginSuccess(ip);
-  const token = issueSession(username);
-  res.setHeader('Set-Cookie', `session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${12 * 60 * 60}`);
-  res.json({ success: true, username });
-});
+    if (!username || !password) return res.status(400).json({ success: false, error: 'MISSING_CREDENTIALS' });
+    if (!authenticate(username, password)) {
+      const entry = recordLoginFailure(ip);
+      if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
+        const retryAfter = Math.ceil((entry.lockedUntil - Date.now()) / 1000);
+        res.setHeader('Retry-After', String(retryAfter));
+        return res.status(429).json({ success: false, error: 'LOCKED', retryAfter });
+      }
+      return res.status(401).json({ success: false, error: 'INVALID_CREDENTIALS', remaining: Math.max(0, MAX_ATTEMPTS_WINDOW - entry.count) });
+    }
+    recordLoginSuccess(ip);
+    const token = issueSession(username);
+    res.setHeader('Set-Cookie', `session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${12 * 60 * 60}`);
+    res.json({ success: true, username });
+  });
 
-app.post('/auth/logout', (req, res) => {
-  res.setHeader('Set-Cookie', 'session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
-  res.json({ success: true });
-});
+  app.post('/auth/logout', (req, res) => {
+    res.setHeader('Set-Cookie', 'session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
+    res.json({ success: true });
+  });
 
-app.get('/auth/session', (req, res) => {
-  const sess = getSession(req);
-  if (!sess) return res.json({ authenticated: false });
-  res.json({ authenticated: true, username: sess.u });
-});
+  app.get('/auth/session', adminGate, (req, res) => {
+    const sess = getSession(req);
+    if (!sess) return res.json({ authenticated: false });
+    res.json({ authenticated: true, username: sess.u });
+  });
 
-app.post('/auth/change-password', requireAuth, (req, res) => {
-  const { oldPassword, newPassword } = req.body || {};
-  if (!oldPassword || !newPassword) return res.status(400).json({ success: false, error: 'MISSING_FIELDS' });
-  const sess = req.session;
-  if (!authenticate(sess.u, oldPassword)) return res.status(401).json({ success: false, error: 'INVALID_OLD_PASSWORD' });
-  if (newPassword.length < 8) return res.status(400).json({ success: false, error: 'PASSWORD_TOO_SHORT' });
-  if (!updatePassword(sess.u, newPassword)) return res.status(500).json({ success: false, error: 'UPDATE_FAILED' });
-  res.json({ success: true, message: 'PASSWORD_UPDATED' });
-});
+  app.post('/auth/change-password', adminGate, requireAuth, (req, res) => {
+    const { oldPassword, newPassword } = req.body || {};
+    if (!oldPassword || !newPassword) return res.status(400).json({ success: false, error: 'MISSING_FIELDS' });
+    const sess = req.session;
+    if (!authenticate(sess.u, oldPassword)) return res.status(401).json({ success: false, error: 'INVALID_OLD_PASSWORD' });
+    if (newPassword.length < 8) return res.status(400).json({ success: false, error: 'PASSWORD_TOO_SHORT' });
+    if (!updatePassword(sess.u, newPassword)) return res.status(500).json({ success: false, error: 'UPDATE_FAILED' });
+    res.json({ success: true, message: 'PASSWORD_UPDATED' });
+  });
+} else {
+  app.all('/auth/*', (req, res) => res.status(404).json({ success: false, error: 'NOT_FOUND' }));
+}
 
-// Protect config panel (HTML) explicitly before static middleware
-app.get('/config.html', (req, res, next) => {
+// Config panel (HTML) route
+app.get('/config.html', adminGate, (req, res) => {
   const sess = getSession(req);
   if (!sess) return res.redirect(302, '/');
   res.setHeader('Cache-Control', 'no-store, must-revalidate');
@@ -151,12 +181,28 @@ app.get('/config.html', (req, res, next) => {
   res.sendFile(path.join(__dirname, 'public', 'config.html'));
 });
 
-// Explicit root handler for login page to ensure no-store
+// Explicit root handler: returns neutral operational JSON by default; serves login only if enabled & gated
 app.get('/', (req, res) => {
-  res.setHeader('Cache-Control', 'no-store, must-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  if (ENABLE_ADMIN_DASHBOARD) {
+    const cookies = req.headers.cookie || '';
+    const queryKey = req.query.key || req.query.admin_key;
+    const isUnlocked = !ADMIN_SECRET_KEY ||
+      (queryKey && queryKey === ADMIN_SECRET_KEY) ||
+      cookies.includes(`admin_gate_key=${encodeURIComponent(ADMIN_SECRET_KEY)}`) ||
+      cookies.includes(`admin_gate_key=${ADMIN_SECRET_KEY}`);
+
+    if (isUnlocked) {
+      if (queryKey && queryKey === ADMIN_SECRET_KEY) {
+        res.setHeader('Set-Cookie', `admin_gate_key=${encodeURIComponent(ADMIN_SECRET_KEY)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400`);
+      }
+      res.setHeader('Cache-Control', 'no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    }
+  }
+
+  res.json({ ok: true, status: 'operational', time: new Date().toISOString() });
 });
 
 // Diagnostics for unexpected exits
@@ -195,101 +241,69 @@ const metrics = {
 };
 
 app.use((req, res, next) => { metrics.requestsTotal++; metrics.lastRequestAt = Date.now(); next(); });
-// Serve static UI (login page at /)
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve static UI assets only if admin dashboard is enabled and unlocked
+if (ENABLE_ADMIN_DASHBOARD) {
+  app.use(adminGate, express.static(path.join(__dirname, 'public')));
+}
 
-// Config API
-app.get('/api/config', (req, res) => {
-  const fs = require('fs');
-  let override = {};
-  try { if (fs.existsSync(OVERRIDE_PATH)) override = JSON.parse(fs.readFileSync(OVERRIDE_PATH, 'utf8')); } catch (e) {
-    // ignore JSON parse or fs errors reading override; return base config
-  }
-  res.json({ success: true, merged: config, override, overridePath: OVERRIDE_PATH });
-});
-app.post('/api/config', (req, res) => {
-  const patch = req.body || {};
-  if (patch.port) {
-    const p = Number(patch.port); if (!Number.isFinite(p) || p <= 0 || p > 65535) return res.status(400).json({ success: false, error: 'INVALID_PORT' });
-    patch.port = p;
-  }
-  if (patch.defaultProviders && !Array.isArray(patch.defaultProviders)) return res.status(400).json({ success: false, error: 'DEFAULT_PROVIDERS_NOT_ARRAY' });
-  const ok = saveConfigPatch(patch);
-  res.json({ success: ok, merged: config });
-});
-
-// Restart endpoint (requires auth via session cookie on /config.html UI)
-app.post('/api/restart', (req, res) => {
-  const sess = getSession(req);
-  if (!sess) return res.status(401).json({ success: false, error: 'UNAUTHORIZED' });
-  res.json({ success: true, message: 'RESTARTING' });
-  // Give the response a moment to flush
-  setTimeout(() => {
-    try {
-      const fs = require('fs');
-      const restartMarker = require('path').join(process.cwd(), 'restart.trigger');
-      fs.writeFileSync(restartMarker, String(Date.now()));
-      console.warn('[control] wrote restart.trigger to notify nodemon');
-    } catch (e) {
-      console.warn('[control] failed to write restart marker:', e.message);
+// Config & Server Control APIs (strictly require admin dashboard enabled + gate + auth)
+if (ENABLE_ADMIN_DASHBOARD) {
+  app.get('/api/config', adminGate, requireAuth, (req, res) => {
+    const fs = require('fs');
+    let override = {};
+    try { if (fs.existsSync(OVERRIDE_PATH)) override = JSON.parse(fs.readFileSync(OVERRIDE_PATH, 'utf8')); } catch (e) {
+      // ignore JSON parse or fs errors reading override; return base config
     }
-    console.warn('[control] restarting process by exit(0)');
-    // Let nodemon detect the file change and restart the app
-    allowControlledExit = true;
-    realProcessExit(0);
-  }, 300);
-});
+    res.json({ success: true, merged: config, override, overridePath: OVERRIDE_PATH });
+  });
 
-// --- Basic informational endpoints ---
+  app.post('/api/config', adminGate, requireAuth, (req, res) => {
+    const patch = req.body || {};
+    if (patch.port) {
+      const p = Number(patch.port); if (!Number.isFinite(p) || p <= 0 || p > 65535) return res.status(400).json({ success: false, error: 'INVALID_PORT' });
+      patch.port = p;
+    }
+    if (patch.defaultProviders && !Array.isArray(patch.defaultProviders)) return res.status(400).json({ success: false, error: 'DEFAULT_PROVIDERS_NOT_ARRAY' });
+    const ok = saveConfigPatch(patch);
+    res.json({ success: ok, merged: config });
+  });
+
+  app.post('/api/restart', adminGate, requireAuth, (req, res) => {
+    const sess = getSession(req);
+    if (!sess) return res.status(401).json({ success: false, error: 'UNAUTHORIZED' });
+    res.json({ success: true, message: 'RESTARTING' });
+    // Give the response a moment to flush
+    setTimeout(() => {
+      try {
+        const fs = require('fs');
+        const restartMarker = require('path').join(process.cwd(), 'restart.trigger');
+        fs.writeFileSync(restartMarker, String(Date.now()));
+        console.warn('[control] wrote restart.trigger to notify nodemon');
+      } catch (e) {
+        console.warn('[control] failed to write restart marker:', e.message);
+      }
+      console.warn('[control] restarting process by exit(0)');
+      // Let nodemon detect the file change and restart the app
+      allowControlledExit = true;
+      realProcessExit(0);
+    }, 300);
+  });
+} else {
+  app.all(['/api/config', '/api/restart'], (req, res) => {
+    res.status(404).json({ success: false, error: 'NOT_FOUND' });
+  });
+}
+
+// --- Public Health Endpoint (always available for platform & uptime checks) ---
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'tmdb-embed-api', time: new Date().toISOString() });
 });
 
-// Metrics endpoint
-app.get('/api/metrics', (req, res) => {
-  res.json({
-    uptimeSeconds: Math.round((Date.now() - metrics.startTime) / 1000),
-    requestsTotal: metrics.requestsTotal,
-    streamRequests: metrics.streamRequests,
-    providerCalls: metrics.providerCalls,
-    streamsReturned: metrics.streamsReturned,
-    tmdbToImdbLookups: metrics.tmdbToImdbLookups,
-    lastRequestAt: metrics.lastRequestAt,
-    memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
-    loadAvg: os.loadavg ? os.loadavg() : [],
-    nodeVersion: process.version,
-    configDefaults: {
-      region: config.defaultRegion,
-      providers: config.defaultProviders,
-      minQualities: config.minQualities ? Object.keys(config.minQualities).length : 0,
-      excludeCodecs: config.excludeCodecs ? Object.keys(config.excludeCodecs).filter(k => config.excludeCodecs[k]).length : 0,
-      febboxCookies: config.febboxCookies.length
-    }
-  });
-});
-
-// Consolidated status (metrics + providers + endpoints)
-app.get('/api/status', (req, res) => {
-  const endpoints = [
-    'GET /api/health',
-    'GET /api/metrics',
-    'GET /api/status',
-    'GET /api/providers',
-    'GET /api/providers/:name',
-    'GET /api/streams/:type/:tmdbId',
-    'GET /api/streams/:provider/:type/:tmdbId',
-    'POST /api/config',
-    'GET /api/config'
-  ];
-  // Determine cookie requirement heuristically (currently Showbox / PStream)
-  const cookieRequiredProviders = new Set(['showbox']);
-  const providers = listProviders().map(p => {
-    const cookieRequired = cookieRequiredProviders.has(p.name);
-    const cookieOk = !cookieRequired || (config.febboxCookies && config.febboxCookies.length > 0);
-    return { name: p.name, enabled: p.enabled, cookieRequired, cookieOk };
-  });
-  res.json({
-    success: true, providerCheckTmdbId: config.providerCheckTmdbId, metrics: {
+// --- Metrics, Status & Provider Information (locked down behind adminGate + auth) ---
+if (ENABLE_ADMIN_DASHBOARD) {
+  // Metrics endpoint
+  app.get('/api/metrics', adminGate, requireAuth, (req, res) => {
+    res.json({
       uptimeSeconds: Math.round((Date.now() - metrics.startTime) / 1000),
       requestsTotal: metrics.requestsTotal,
       streamRequests: metrics.streamRequests,
@@ -297,35 +311,82 @@ app.get('/api/status', (req, res) => {
       streamsReturned: metrics.streamsReturned,
       tmdbToImdbLookups: metrics.tmdbToImdbLookups,
       lastRequestAt: metrics.lastRequestAt,
-      memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024)
-    }, endpoints, providers
+      memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+      loadAvg: os.loadavg ? os.loadavg() : [],
+      nodeVersion: process.version,
+      configDefaults: {
+        region: config.defaultRegion,
+        providers: config.defaultProviders,
+        minQualities: config.minQualities ? Object.keys(config.minQualities).length : 0,
+        excludeCodecs: config.excludeCodecs ? Object.keys(config.excludeCodecs).filter(k => config.excludeCodecs[k]).length : 0,
+        febboxCookies: config.febboxCookies.length
+      }
+    });
   });
-});
 
-// Providers list
-app.get('/api/providers', (req, res) => {
-  res.json({ success: true, providers: listProviders() });
-});
-
-// Debug environment/config endpoint (do not expose publicly in production)
-app.get('/api/debug/env', (req, res) => {
-  const cookieStats = getCookieStats ? getCookieStats() : null;
-  res.json({
-    port: config.port,
-    defaultProviders: config.defaultProviders,
-    febboxCookieCount: config.febboxCookies.length,
-    showboxCacheDir: process.env.SHOWBOX_CACHE_DIR || '(os tmp)',
-    nodeVersion: process.version,
-    cookieStats
+  // Consolidated status (metrics + providers + endpoints)
+  app.get('/api/status', adminGate, requireAuth, (req, res) => {
+    const endpoints = [
+      'GET /api/health',
+      'GET /api/metrics',
+      'GET /api/status',
+      'GET /api/providers',
+      'GET /api/providers/:name',
+      'GET /api/streams/:type/:tmdbId',
+      'GET /api/streams/:provider/:type/:tmdbId',
+      'POST /api/config',
+      'GET /api/config'
+    ];
+    // Determine cookie requirement heuristically (currently Showbox / PStream)
+    const cookieRequiredProviders = new Set(['showbox']);
+    const providers = listProviders().map(p => {
+      const cookieRequired = cookieRequiredProviders.has(p.name);
+      const cookieOk = !cookieRequired || (config.febboxCookies && config.febboxCookies.length > 0);
+      return { name: p.name, enabled: p.enabled, cookieRequired, cookieOk };
+    });
+    res.json({
+      success: true, providerCheckTmdbId: config.providerCheckTmdbId, metrics: {
+        uptimeSeconds: Math.round((Date.now() - metrics.startTime) / 1000),
+        requestsTotal: metrics.requestsTotal,
+        streamRequests: metrics.streamRequests,
+        providerCalls: metrics.providerCalls,
+        streamsReturned: metrics.streamsReturned,
+        tmdbToImdbLookups: metrics.tmdbToImdbLookups,
+        lastRequestAt: metrics.lastRequestAt,
+        memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024)
+      }, endpoints, providers
+    });
   });
-});
 
-// Single provider info
-app.get('/api/providers/:name', (req, res) => {
-  const p = getProvider(req.params.name);
-  if (!p) return res.status(404).json({ success: false, error: 'PROVIDER_NOT_FOUND' });
-  res.json({ success: true, provider: { name: p.name, enabled: p.enabled } });
-});
+  // Providers list
+  app.get('/api/providers', adminGate, requireAuth, (req, res) => {
+    res.json({ success: true, providers: listProviders() });
+  });
+
+  // Debug environment/config endpoint (do not expose publicly in production)
+  app.get('/api/debug/env', adminGate, requireAuth, (req, res) => {
+    const cookieStats = getCookieStats ? getCookieStats() : null;
+    res.json({
+      port: config.port,
+      defaultProviders: config.defaultProviders,
+      febboxCookieCount: config.febboxCookies.length,
+      showboxCacheDir: process.env.SHOWBOX_CACHE_DIR || '(os tmp)',
+      nodeVersion: process.version,
+      cookieStats
+    });
+  });
+
+  // Single provider info
+  app.get('/api/providers/:name', adminGate, requireAuth, (req, res) => {
+    const p = getProvider(req.params.name);
+    if (!p) return res.status(404).json({ success: false, error: 'PROVIDER_NOT_FOUND' });
+    res.json({ success: true, provider: { name: p.name, enabled: p.enabled } });
+  });
+} else {
+  app.all(['/api/metrics', '/api/status', '/api/providers', '/api/providers/*', '/api/debug/env'], (req, res) => {
+    res.status(404).json({ success: false, error: 'NOT_FOUND' });
+  });
+}
 
 // Helper to extract client geo from request / headers / query params
 function extractClientGeo(req) {

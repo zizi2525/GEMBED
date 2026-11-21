@@ -97,7 +97,7 @@ function normalizeConfig(base) {
   // Dynamic provider enable flags
   const providerNames = getProviderNames();
   const boolKeys = providerNames.map(name => `enable${name.charAt(0).toUpperCase() + name.slice(1)}Provider`);
-  boolKeys.push('disableCache', 'enablePStreamApi', 'disableUrlValidation', 'disable4khdhubUrlValidation', 'enableProxy', 'blockNoOrigin');
+  boolKeys.push('disableCache', 'enablePStreamApi', 'disableUrlValidation', 'disable4khdhubUrlValidation', 'enableProxy', 'blockNoOrigin', 'enableAdminDashboard');
   
   boolKeys.forEach(k=>{ if (cfg[k] === 'true') cfg[k] = true; else if (cfg[k] === 'false') cfg[k] = false; });
   
@@ -130,6 +130,8 @@ function normalizeConfig(base) {
   if (cfg.disable4khdhubUrlValidation === undefined) cfg.disable4khdhubUrlValidation = false;
   // TMDB ID used by the dashboard's "Run Provider Functional Checks" feature
   if (!cfg.providerCheckTmdbId) cfg.providerCheckTmdbId = '278';
+  if (cfg.enableAdminDashboard === undefined) cfg.enableAdminDashboard = false;
+  if (!cfg.adminSecretKey) cfg.adminSecretKey = (process.env.ADMIN_SECRET_KEY || process.env.ADMIN_KEY || '').trim();
   return cfg;
 }
 
@@ -198,7 +200,9 @@ function loadConfig() {
     enableProxy: process.env.ENABLE_PROXY,
     allowedOriginsRaw: process.env.ALLOWED_ORIGINS || null,
     blockNoOrigin: process.env.BLOCK_NO_ORIGIN === 'true',
-    providerCheckTmdbId: process.env.PROVIDER_CHECK_TMDB_ID || null
+    providerCheckTmdbId: process.env.PROVIDER_CHECK_TMDB_ID || null,
+    enableAdminDashboard: process.env.ENABLE_ADMIN_DASHBOARD === 'true',
+    adminSecretKey: (process.env.ADMIN_SECRET_KEY || process.env.ADMIN_KEY || '').trim()
   };
   
   // Dynamic provider enable flags from env
