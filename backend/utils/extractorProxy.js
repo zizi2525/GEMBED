@@ -135,10 +135,71 @@ async function fetchWithProxy(providerName, url, options = {}) {
   return fetch(url, fetchOpts);
 }
 
+const STICKY_SLOTS = [1, 3, 4, 5, 7, 8, 9];
+let stickySlotIndex = 0;
+
+function rotateStickySlot() {
+  stickySlotIndex = (stickySlotIndex + 1) % STICKY_SLOTS.length;
+}
+
+function getStickyProxyUrl(providerName) {
+  if (providerName) {
+    const rawName = (providerName || '').toLowerCase().trim();
+    const envSpecific = process.env[`EXTRACTOR_PROXY_${rawName.toUpperCase()}_URL`];
+    if (envSpecific && envSpecific.trim()) return envSpecific.trim();
+  }
+
+  const base = getExtractorProxyUrl();
+  if (!base) return '';
+
+  // If using Webshare rotating proxy (-rotate), replace with sticky slot number
+  // so multi-step token flows (like Vixsrc) maintain the same IP across steps.
+  if (base.includes('-rotate')) {
+    const slot = STICKY_SLOTS[stickySlotIndex % STICKY_SLOTS.length];
+    return base.replace('-rotate', `-${slot}`);
+  }
+
+  return base;
+}
+
+const stickyAgentCache = new Map();
+function getStickyAgents(providerName) {
+  const proxyUrl = getStickyProxyUrl(providerName);
+  if (!proxyUrl) return { httpsAgent: null, httpAgent: null, undiciAgent: null };
+  if (!stickyAgentCache.has(proxyUrl)) {
+    stickyAgentCache.set(proxyUrl, {
+      httpsAgent: new HttpsProxyAgent(proxyUrl),
+      httpAgent: new HttpProxyAgent(proxyUrl),
+      undiciAgent: new ProxyAgent(proxyUrl)
+    });
+  }
+  return stickyAgentCache.get(proxyUrl);
+}
+
+/**
+ * Generates options for Axios requests with a STICKY proxy agent.
+ * Use for scrapers with multi-step token validation (e.g. Vixsrc) where
+ * consecutive requests MUST originate from the exact same IP address.
+ */
+function getStickyAxiosConfig(providerName, baseConfig = {}) {
+  if (!isExtractorProxyEnabled(providerName)) {
+    return baseConfig;
+  }
+  const { httpsAgent, httpAgent } = getStickyAgents(providerName);
+  return {
+    ...baseConfig,
+    httpsAgent: baseConfig.httpsAgent || httpsAgent,
+    httpAgent: baseConfig.httpAgent || httpAgent,
+    proxy: false
+  };
+}
+
 module.exports = {
   getExtractorProxyUrl,
   isExtractorProxyEnabled,
   getAxiosConfig,
+  getStickyAxiosConfig,
+  rotateStickySlot,
   getFetchOptions,
   fetchWithProxy,
   getAgents

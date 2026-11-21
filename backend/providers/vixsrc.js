@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { getAxiosConfig } = require('../utils/extractorProxy');
+const { getStickyAxiosConfig, rotateStickySlot } = require('../utils/extractorProxy');
 
 const BASE_URL = 'https://vixsrc.to';
 const VIXSRC_HEADERS = {
@@ -11,27 +11,29 @@ const VIXSRC_HEADERS = {
 };
 
 // Step 1: GET /api/movie/{id} or /api/tv/{id}/{s}/{e} → { src: "/embed/..." }
-async function fetchApi(url) {
+async function fetchApi(url, axiosConfig) {
     try {
-        const response = await axios.get(url, getAxiosConfig('vixsrc', { headers: VIXSRC_HEADERS, timeout: 10000 }));
+        const response = await axios.get(url, axiosConfig);
         if (response.status !== 200 || !response.data) return null;
         return response.data;
-    } catch {
+    } catch (e) {
+        console.log('[Vixsrc] Step 1 API error:', e.response ? `${e.response.status} ${e.response.statusText}` : e.message);
         return null;
     }
 }
 
 // Step 2: GET BASE_URL + sublink.src → HTML embed page
-async function fetchEmbedPage(suburl) {
+async function fetchEmbedPage(suburl, axiosConfig) {
     try {
-        const response = await axios.get(BASE_URL + suburl, getAxiosConfig('vixsrc', {
+        const response = await axios.get(BASE_URL + suburl, {
+            ...axiosConfig,
             headers: { ...VIXSRC_HEADERS, Accept: 'text/html,application/xhtml+xml,*/*' },
-            timeout: 10000,
             responseType: 'text'
-        }));
+        });
         if (response.status !== 200) return null;
         return response.data;
-    } catch {
+    } catch (e) {
+        console.log('[Vixsrc] Step 2 embed error:', e.response ? `${e.response.status} ${e.response.statusText}` : e.message);
         return null;
     }
 }
@@ -71,15 +73,28 @@ async function getVixsrcStreams(tmdbId, mediaType = 'movie', seasonNum = null, e
         apiUrl = `${BASE_URL}/api/tv/${tmdbId}/${seasonNum}/${episodeNum}`;
     }
 
+    // Step 1 and Step 2 MUST use the exact same IP address (Vixsrc binds tokens to caller IP).
+    // Using sticky proxy agent ensures consistent IP across both steps.
+    let axiosConfig = getStickyAxiosConfig('vixsrc', { headers: VIXSRC_HEADERS, timeout: 10000 });
+
     console.log(`[Vixsrc] Step 1 - Calling API: ${apiUrl}`);
-    const apiData = await fetchApi(apiUrl);
+    let apiData = await fetchApi(apiUrl, axiosConfig);
+
+    // Failover: if initial slot failed (e.g. Cloudflare blocked or slot timeout), rotate and retry once
+    if (!apiData || !apiData.src) {
+        console.log('[Vixsrc] Step 1 failed or blocked, retrying with next sticky proxy slot...');
+        rotateStickySlot();
+        axiosConfig = getStickyAxiosConfig('vixsrc', { headers: VIXSRC_HEADERS, timeout: 10000 });
+        apiData = await fetchApi(apiUrl, axiosConfig);
+    }
+
     if (!apiData || !apiData.src) {
         console.log('[Vixsrc] No src returned from API');
         return [];
     }
     console.log(`[Vixsrc] Step 2 - Fetching embed page: ${BASE_URL}${apiData.src}`);
 
-    const html = await fetchEmbedPage(apiData.src);
+    let html = await fetchEmbedPage(apiData.src, axiosConfig);
     if (!html) {
         console.log('[Vixsrc] Failed to fetch embed page');
         return [];
@@ -93,6 +108,9 @@ async function getVixsrcStreams(tmdbId, mediaType = 'movie', seasonNum = null, e
 
     const masterUrl = buildMasterUrl(tokenData);
     console.log(`[Vixsrc] Step 3 - Master URL: ${masterUrl}`);
+
+    // Rotate slot for subsequent requests so traffic is distributed
+    rotateStickySlot();
 
     return [
         {
