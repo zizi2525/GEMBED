@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 // Path for auth users file
-const AUTH_FILE = path.join(process.cwd(), 'utils/auth-users.json');
+const AUTH_FILE = path.join(__dirname, 'auth-users.json');
 
 // In-memory cache
 let usersCache = null;
@@ -18,21 +18,33 @@ function ensureAuthFile() {
     info: 'Initial default credentials. CHANGE THE PASSWORD IMMEDIATELY using /auth/change-password after logging in.',
     users: [ { username: 'admin', hash } ]
   };
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(data, null, 2));
-  console.warn('[auth] Created default auth-users.json with username "admin" and password "change-me". CHANGE IT NOW.');
+  try {
+    fs.writeFileSync(AUTH_FILE, JSON.stringify(data, null, 2));
+    console.warn('[auth] Created default auth-users.json with username "admin" and password "change-me". CHANGE IT NOW.');
+  } catch (err) {
+    console.warn('[auth] Could not create auth-users.json (read-only filesystem or permissions):', err.message);
+  }
 }
 
 function loadUsers(force=false){
   if (!force && usersCache && (Date.now() - lastLoaded) < LOAD_INTERVAL_MS) return usersCache;
   ensureAuthFile();
   try {
-    const raw = fs.readFileSync(AUTH_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    usersCache = Array.isArray(parsed.users) ? parsed.users : [];
-    lastLoaded = Date.now();
+    if (fs.existsSync(AUTH_FILE)) {
+      const raw = fs.readFileSync(AUTH_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      usersCache = Array.isArray(parsed.users) ? parsed.users : [];
+      lastLoaded = Date.now();
+    } else {
+      // Fallback in-memory default when running on serverless read-only filesystem
+      const { hash } = hashPassword('change-me');
+      usersCache = [ { username: 'admin', hash } ];
+      lastLoaded = Date.now();
+    }
   } catch (e) {
     console.error('[auth] Failed loading users file:', e.message);
-    usersCache = [];
+    const { hash } = hashPassword('change-me');
+    usersCache = [ { username: 'admin', hash } ];
   }
   return usersCache;
 }

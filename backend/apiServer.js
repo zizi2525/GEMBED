@@ -148,7 +148,7 @@ app.get('/config.html', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
-  res.sendFile(path.join(process.cwd(), 'public', 'config.html'));
+  res.sendFile(path.join(__dirname, 'public', 'config.html'));
 });
 
 // Explicit root handler for login page to ensure no-store
@@ -156,7 +156,7 @@ app.get('/', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
-  res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Diagnostics for unexpected exits
@@ -196,7 +196,7 @@ const metrics = {
 
 app.use((req, res, next) => { metrics.requestsTotal++; metrics.lastRequestAt = Date.now(); next(); });
 // Serve static UI (login page at /)
-app.use(express.static(path.join(process.cwd(), 'public')));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Config API
 app.get('/api/config', (req, res) => {
@@ -457,22 +457,33 @@ app.get('/api/streams/:provider/:type/:tmdbId', async (req, res) => {
   }
 });
 
-const PORT = config.port;
-const HOST = process.env.BIND_HOST || '0.0.0.0';
-const server = app.listen(PORT, HOST, () => {
-  console.log(`TMDB Embed REST API listening on http://${HOST}:${PORT}`);
-  if (HOST !== 'localhost') {
-    console.log(`Local access (if running on your machine): http://localhost:${PORT}`);
-  }
-  console.log('Endpoints:');
-  console.log('  GET  /api/health');
-  console.log('  GET  /api/metrics');
-  console.log('  GET  /api/providers');
-  console.log('  GET  /api/streams/:type/:id');
-  console.log('  POST /api/streams/:type/:id');
-  if (!config.febboxCookies || config.febboxCookies.length === 0) {
-    console.warn('[startup][warning] No FEBBOX_COOKIES configured. Showbox / PStream related streams may be unavailable. Set FEBBOX_COOKIES in your environment to enable these sources.');
-  }
-});
+// Export app instance for Vercel, serverless platforms, and integration tests
+module.exports = app;
 
-server.on('error', (err) => { console.error('[diagnostic] server error', err); });
+if (!process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  const PORT = config.port;
+  const HOST = process.env.BIND_HOST || '0.0.0.0';
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`TMDB Embed REST API listening on http://${HOST}:${PORT}`);
+    if (HOST !== 'localhost') {
+      console.log(`Local access (if running on your machine): http://localhost:${PORT}`);
+    }
+    console.log('Endpoints:');
+    console.log('  GET  /api/health');
+    console.log('  GET  /api/metrics');
+    console.log('  GET  /api/providers');
+    console.log('  GET  /api/streams/:type/:id');
+    console.log('  POST /api/streams/:type/:id');
+    if (!config.febboxCookies || config.febboxCookies.length === 0) {
+      console.warn('[startup][warning] No FEBBOX_COOKIES configured. Showbox / PStream related streams may be unavailable. Set FEBBOX_COOKIES in your environment to enable these sources.');
+    }
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`[startup] Port ${PORT} already in use. Running without re-binding port.`);
+    } else {
+      console.error('[diagnostic] server error', err);
+    }
+  });
+}

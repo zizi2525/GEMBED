@@ -2,8 +2,8 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 // Relocated user-config.json into utils directory; maintain backward-compatible fallback
-const NEW_OVERRIDE_PATH = path.join(process.cwd(), 'utils', 'user-config.json');
-const LEGACY_OVERRIDE_PATH = path.join(process.cwd(), 'user-config.json');
+const NEW_OVERRIDE_PATH = path.join(__dirname, 'user-config.json');
+const LEGACY_OVERRIDE_PATH = path.join(__dirname, '..', 'user-config.json');
 const OVERRIDE_PATH = (fs.existsSync(NEW_OVERRIDE_PATH) || !fs.existsSync(LEGACY_OVERRIDE_PATH)) ? NEW_OVERRIDE_PATH : LEGACY_OVERRIDE_PATH;
 const CONFIG_SCHEMA_VERSION = 1; // Increment when structure / semantics change
 
@@ -54,7 +54,7 @@ function writeOverrideFile(obj) {
 
 function getProviderNames() {
   try {
-    const providersDir = path.join(process.cwd(), 'providers');
+    const providersDir = path.join(__dirname, '..', 'providers');
     if (!fs.existsSync(providersDir)) return [];
     return fs.readdirSync(providersDir)
       .filter(file => file.endsWith('.js') && file !== 'registry.js')

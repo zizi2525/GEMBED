@@ -11,7 +11,8 @@ const providerFunctionMap = {
   'vixsrc.js': 'getVixsrcStreams',
   'vidzy.js': 'getVidzyStreams',
   'netmirror.js': 'getNetmirrorStreams',
-  'moviebox.js': 'getMovieBoxStreams'
+  'moviebox.js': 'getMovieBoxStreams',
+  'dahmermovies.js': 'getDahmermoviesStreams'
 };
 
 // Stats for debug endpoint
