@@ -31,12 +31,12 @@ body {
 }
 
 ::selection {
-  background: rgba(224, 69, 58, 0.35);
+  background: rgba(30, 58, 216, 0.35);
   color: #f2ede3;
 }
 
 :focus-visible {
-  outline: 2px solid rgba(224, 69, 58, 0.7);
+  outline: 2px solid rgba(121, 224 58, 0.7);
   outline-offset: 2px;
 }
 
@@ -57,29 +57,32 @@ video::cue {
   background: #080807;
   box-shadow: inset 0 0 0 1px rgba(242, 237, 227, 0.06);
 }
+
 .film-perf {
   flex: 0 0 12px;
   border-radius: 3px;
-  background-image: radial-gradient(
-    circle at center,
-    rgba(242, 237, 227, 0.22) 2.5px,
-    transparent 3px
-  );
+  background-image: radial-gradient(circle at center,
+      rgba(242, 237, 227, 0.22) 2.5px,
+      transparent 3px);
   background-size: 12px 16px;
   background-repeat: repeat-y;
   background-position: center top;
 }
+
 @media (max-width: 640px) {
   .film-cell {
     gap: 6px;
     padding: 6px;
   }
+
   .film-perf {
     flex-basis: 7px;
     background-size: 7px 12px;
   }
 }
+
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
@@ -95,15 +98,18 @@ video::cue {
   width: 10px;
   height: 10px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: rgba(242, 237, 227, 0.18);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(242, 237, 227, 0.3);
   background-clip: padding-box;
@@ -135,6 +141,7 @@ video::cue {
     transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
   will-change: opacity, transform;
 }
+
 [data-reveal].is-in {
   opacity: 1;
   transform: none;
@@ -155,6 +162,7 @@ video::cue {
     opacity: 0;
     transform: translate3d(0, 0.55em, 0);
   }
+
   to {
     opacity: 1;
     transform: translate3d(0, 0, 0);
@@ -162,6 +170,7 @@ video::cue {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   [data-reveal],
   .kinetic-word {
     opacity: 1;
@@ -193,6 +202,7 @@ video::cue {
     inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
   backdrop-filter: blur(2px);
 }
+
 .frame::before,
 .frame::after {
   content: "";
@@ -202,55 +212,68 @@ video::cue {
   border-color: rgba(216, 180, 254, 0.55);
   pointer-events: none;
 }
+
 .frame-corner {
   position: absolute;
   width: 26px;
   height: 26px;
   pointer-events: none;
 }
+
 .frame-corner::before,
 .frame-corner::after {
   content: "";
   position: absolute;
   background: rgba(216, 180, 254, 0.5);
 }
+
 .frame-corner::before {
   width: 100%;
   height: 1.5px;
 }
+
 .frame-corner::after {
   width: 1.5px;
   height: 100%;
 }
+
 .frame-corner.tl {
   top: 18px;
   left: 18px;
 }
+
 .frame-corner.tr {
   top: 18px;
   right: 18px;
 }
+
 .frame-corner.tr::before {
   right: 0;
 }
+
 .frame-corner.tr::after {
   right: 0;
 }
+
 .frame-corner.bl {
   bottom: 18px;
   left: 18px;
 }
+
 .frame-corner.bl::before {
   bottom: 0;
 }
+
 .frame-corner.br {
   bottom: 18px;
   right: 18px;
 }
+
 .frame-corner.br::before {
   bottom: 0;
   right: 0;
 }
+
 .frame-corner.br::after {
   bottom: 0;
   right: 0;
@@ -259,6 +282,7 @@ video::cue {
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
@@ -272,9 +296,22 @@ video::cue {
     opacity: 0;
     transform: translateY(8px) scale(0.96);
   }
+
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+@keyframes wvSheetUp {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -284,17 +321,26 @@ video::cue {
   scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 }
 
+@media (max-width: 639px) {
+  .wv-menu {
+    animation: wvSheetUp 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
 .wv-menu *::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
+
 .wv-menu *::-webkit-scrollbar-track {
   background: transparent;
 }
+
 .wv-menu *::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.2);
   border-radius: 999px;
 }
+
 .wv-menu *::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.35);
 }
@@ -309,6 +355,7 @@ video::cue {
   background: rgba(255, 255, 255, 0.22);
   outline: none;
 }
+
 .vp-range::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
@@ -320,19 +367,23 @@ video::cue {
   cursor: pointer;
   transition: transform 0.15s ease;
 }
+
 .vp-range:hover::-webkit-slider-thumb {
   transform: scale(1.15);
 }
+
 .vp-range::-moz-range-track {
   height: 4px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.22);
 }
+
 .vp-range::-moz-range-progress {
   height: 4px;
   border-radius: 999px;
   background: var(--accent, #e0453a);
 }
+
 .vp-range::-moz-range-thumb {
   width: 12px;
   height: 12px;

@@ -387,6 +387,8 @@ export function VidPlayer({
   const [menu, setMenu] = useState<Menu>(null);
   const menuRef = useRef<Menu>(null);
   const [showControls, setShowControls] = useState(true);
+  const showControlsRef = useRef(true);
+  showControlsRef.current = showControls;
 
   /* ------------------------------- quality -------------------------------- */
   const [levels, setLevels] = useState<{ index: number; label: string; height: number; url?: string }[]>([]);
@@ -585,6 +587,7 @@ export function VidPlayer({
 
   const progressBarRef = useRef<HTMLDivElement>(null);
   const progressThumbRef = useRef<HTMLDivElement>(null);
+  const isScrubbingRef = useRef(false);
   const bufferedBarRef = useRef<HTMLDivElement>(null);
   const timeCurrentTextRef = useRef<HTMLSpanElement>(null);
   const timeDurationTextRef = useRef<HTMLSpanElement>(null);
@@ -2383,10 +2386,10 @@ export function VidPlayer({
       />
 
       {/* Double-tap the sides to skip 10s; hold anywhere to play at 2× */}
-      <div className="absolute inset-x-0 bottom-24 top-0 z-10 flex">
+      <div className="absolute inset-x-0 bottom-16 sm:bottom-24 top-0 z-10 flex">
         <div
           role="presentation"
-          className="h-full w-[30%]"
+          className="h-full w-[25%] sm:w-[30%]"
           onPointerDown={beginHold}
           onPointerUp={() => {
             endHold();
@@ -2400,6 +2403,11 @@ export function VidPlayer({
           className="h-full flex-1"
           onClick={() => {
             if (suppressClickRef.current) return;
+            if (!showControlsRef.current) {
+              setShowControls(true);
+              handleActivity();
+              return;
+            }
             togglePlay();
           }}
           onPointerDown={beginHold}
@@ -2409,7 +2417,7 @@ export function VidPlayer({
         />
         <div
           role="presentation"
-          className="h-full w-[30%]"
+          className="h-full w-[25%] sm:w-[30%]"
           onPointerDown={beginHold}
           onPointerUp={() => {
             endHold();
@@ -2431,12 +2439,12 @@ export function VidPlayer({
 
       {/* Pause screen: title, time left and the clock time it ends */}
       {!isPlaying && !isBuffering && !blockingError && pausedAt > 0 && (
-        <div className="pointer-events-none absolute inset-x-0 top-[calc(50%+3.75rem)] z-20 px-6 text-center">
-          <p className="truncate text-sm font-semibold text-white drop-shadow">
+        <div className="pointer-events-none absolute inset-x-0 top-[calc(50%+2.5rem)] sm:top-[calc(50%+3.75rem)] z-20 px-4 sm:px-6 text-center">
+          <p className="truncate text-xs sm:text-sm font-semibold text-white drop-shadow">
             {title}
             {type === "tv" ? ` · S${curSeason} E${curEpisode}` : ""}
           </p>
-          <p className="mt-1 text-[11px] text-white/60">
+          <p className="mt-0.5 sm:mt-1 text-[10px] sm:text-[11px] text-white/60">
             {formatTime(Math.max(0, duration - pausedAt))} left · Ends{" "}
             {new Date(
               Date.now() + Math.max(0, duration - pausedAt) * 1000
@@ -2447,7 +2455,7 @@ export function VidPlayer({
 
       {/* Resume notice */}
       {resumeToast !== null && !blockingError && (
-        <div className="absolute bottom-[8.25rem] left-3 z-40 flex items-center gap-2 rounded-full border border-white/15 bg-black/85 px-3 py-1.5 text-[11px] text-white shadow-2xl backdrop-blur sm:left-5">
+        <div className={`absolute left-3 z-40 flex items-center gap-2 rounded-full border border-white/15 bg-black/85 px-3 py-1.5 text-[11px] text-white shadow-2xl backdrop-blur sm:left-5 ${showControls ? "bottom-20 sm:bottom-24" : "bottom-4 sm:bottom-6"}`}>
           <span>Resumed at {formatTime(resumeToast)}</span>
           <button
             type="button"
@@ -2473,7 +2481,7 @@ export function VidPlayer({
 
       {/* Up next countdown */}
       {upNext !== null && !blockingError && (
-        <div className="absolute bottom-[8.25rem] right-3 z-40 w-60 rounded-xl border border-white/15 bg-[#15141a]/95 p-3 shadow-2xl backdrop-blur sm:right-8">
+        <div className={`absolute right-3 z-40 max-w-[calc(100vw-1.5rem)] w-60 rounded-xl border border-white/15 bg-[#15141a]/95 p-3 shadow-2xl backdrop-blur sm:right-8 ${showControls ? "bottom-20 sm:bottom-24" : "bottom-4 sm:bottom-6"}`}>
           <div className="flex items-center justify-between">
             <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-white/40">
               Up next
@@ -2510,20 +2518,20 @@ export function VidPlayer({
       {/* Subtitle line */}
       <div
         ref={subContainerRef}
-        className="pointer-events-none absolute inset-x-0 z-30 flex flex-col items-center justify-end px-4 text-center"
+        className="pointer-events-none absolute inset-x-0 z-30 flex flex-col items-center justify-end px-3 sm:px-4 text-center"
         style={{
           display: "none",
-          bottom: `calc(${Math.max(4, 100 - subPrefs.position)}% + ${showControls ? "clamp(3rem, 11%, 7.5rem)" : "clamp(0.5rem, 2%, 1.5rem)"
+          bottom: `calc(${Math.max(4, 100 - subPrefs.position)}% + ${showControls ? "clamp(3.5rem, 12%, 7.5rem)" : "clamp(0.5rem, 3%, 2rem)"
             })`,
           transition: "bottom 180ms ease",
         }}
       >
         <div
           ref={subTextRef}
-          className="max-w-[85%] whitespace-pre-line rounded px-3 py-1 font-medium leading-relaxed"
+          className="max-w-[92%] sm:max-w-[85%] whitespace-pre-line rounded px-2.5 sm:px-3 py-1 font-medium leading-relaxed"
           style={{
             fontFamily: subPrefs.family || "inherit",
-            fontSize: `${subPrefs.size || 20}px`,
+            fontSize: `clamp(13px, 3.5vw, ${subPrefs.size || 20}px)`,
             color: cueColor(subPrefs.color, subPrefs.textOpacity),
             backgroundColor: cueBackground(subPrefs.bgColor, subPrefs.bgOpacity),
             textShadow:
@@ -2591,23 +2599,23 @@ export function VidPlayer({
           type="button"
           onClick={togglePlay}
           aria-label="Play video"
-          className="absolute z-20 flex h-16 w-16 items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-105 sm:h-20 sm:w-20"
+          className="absolute z-20 flex h-14 w-14 sm:h-20 sm:w-20 items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-105"
           style={{ backgroundColor: accentColor }}
         >
-          <Play className="ml-1 h-7 w-7 fill-current sm:h-9 sm:w-9" />
+          <Play className="ml-0.5 sm:ml-1 h-6 w-6 fill-current sm:h-9 sm:w-9" />
         </button>
       )}
 
       {/* Top bar */}
       <div
-        className={`absolute inset-x-0 top-0 z-40 bg-gradient-to-b from-black/80 via-black/35 to-transparent p-4 transition-opacity duration-300 sm:p-5 ${showControls ? "opacity-100" : "pointer-events-none opacity-0"
+        className={`absolute inset-x-0 top-0 z-40 bg-gradient-to-b from-black/85 via-black/40 to-transparent px-3 pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] transition-opacity duration-300 sm:px-5 sm:pb-5 sm:pt-5 ${showControls ? "opacity-100" : "pointer-events-none opacity-0"
           }`}
       >
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold text-white drop-shadow sm:text-base">
+          <h1 className="truncate text-xs font-semibold text-white drop-shadow sm:text-base">
             {title}
           </h1>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10.5px] font-medium">
+          <div className="mt-1 flex flex-wrap items-center gap-1 text-[9.5px] font-medium sm:mt-1.5 sm:gap-1.5 sm:text-[10.5px]">
             {type === "tv" && curSeason && curEpisode && (
               <span
                 className="rounded px-1.5 py-0.5"
@@ -2627,7 +2635,7 @@ export function VidPlayer({
               </span>
             )}
             {currentStream && (
-              <span className="text-white/40">
+              <span className="truncate max-w-[140px] sm:max-w-none text-white/40">
                 {currentStream.name}
                 {failedSet.has(currentStream.id) ? " · struggling" : ""}
               </span>
@@ -2646,7 +2654,7 @@ export function VidPlayer({
               ? "Play next episode"
               : activeSkip.label
           }
-          className="absolute bottom-[8rem] right-4 z-40 flex items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-[11px] font-semibold text-white shadow-[0_10px_28px_-14px_rgba(0,0,0,0.9)] transition hover:brightness-110 sm:bottom-[8.5rem] sm:right-8 sm:text-xs"
+          className={`absolute right-3 z-40 flex items-center gap-1.5 rounded-md px-2.5 py-1 text-left text-[11px] font-semibold text-white shadow-[0_10px_28px_-14px_rgba(0,0,0,0.9)] transition hover:brightness-110 sm:right-8 sm:text-xs ${showControls ? "bottom-20 sm:bottom-24" : "bottom-4 sm:bottom-6"}`}
           style={{ backgroundColor: accentColor }}
         >
           <FastForward className="h-3 w-3 shrink-0 fill-current" />
@@ -2670,11 +2678,19 @@ export function VidPlayer({
             }
             setAutoplayBlocked(false);
           }}
-          className="absolute bottom-[11.5rem] left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/15 bg-black/80 px-4 py-2 text-[11px] font-semibold text-white shadow-2xl backdrop-blur transition hover:bg-black sm:bottom-[12rem] sm:text-[12px]"
+          className={`absolute left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/15 bg-black/80 px-3.5 py-1.5 text-[10.5px] font-semibold text-white shadow-2xl backdrop-blur transition hover:bg-black max-w-[90vw] text-center sm:px-4 sm:py-2 sm:text-[12px] ${showControls ? "bottom-24 sm:bottom-28" : "bottom-6 sm:bottom-8"}`}
         >
-          <Volume2 className="h-4 w-4" />
+          <Volume2 className="h-4 w-4 shrink-0" />
           Autoplay started muted · Tap to unmute
         </button>
+      )}
+
+      {/* Mobile backdrop for menus */}
+      {menu && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm sm:hidden"
+          onClick={() => setMenu(null)}
+        />
       )}
 
       {/* ---------------- Bottom controls ---------------- */}
@@ -2682,25 +2698,33 @@ export function VidPlayer({
         className={`absolute inset-x-0 bottom-0 z-40 transition-opacity duration-300 ${showControls ? "opacity-100" : "pointer-events-none opacity-0"
           }`}
       >
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-black via-black/80 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 sm:h-44 bg-gradient-to-t from-black via-black/80 to-transparent" />
 
-        <div className="relative px-3 pb-3 pt-10 sm:px-5 sm:pb-4">
+        <div className="relative px-2.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] pt-8 sm:px-5 sm:pb-4 sm:pt-10">
           {/* Seek bar */}
           <div
-            className="group/seek relative mb-1 flex h-6 w-full cursor-pointer items-center"
-            onClick={(event) => {
-              const rect = event.currentTarget.getBoundingClientRect();
+            className="group/seek relative mb-1.5 flex h-7 sm:h-6 w-full cursor-pointer touch-none items-center py-2"
+            onPointerDown={(event) => {
+              const target = event.currentTarget;
+              target.setPointerCapture?.(event.pointerId);
+              isScrubbingRef.current = true;
+              const rect = target.getBoundingClientRect();
               const pct = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
               const dur = durationRef.current || videoRef.current?.duration || 1;
               seek(pct * dur);
             }}
-            onMouseMove={(event) => {
-              const rect = event.currentTarget.getBoundingClientRect();
-              const pos = event.clientX - rect.left;
+            onPointerMove={(event) => {
+              const target = event.currentTarget;
+              const rect = target.getBoundingClientRect();
+              const pos = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
               const dur = durationRef.current || videoRef.current?.duration || 1;
+              if (isScrubbingRef.current) {
+                const pct = Math.max(0, Math.min(1, pos / rect.width));
+                seek(pct * dur);
+              }
               const tooltip = hoverTooltipRef.current;
-              if (tooltip) {
-                const time = Math.max(0, Math.min(1, pos / rect.width)) * dur;
+              if (tooltip && event.pointerType === "mouse") {
+                const time = (pos / (rect.width || 1)) * dur;
                 const seg = timelineSegments.find((item) => time >= item.start && time < item.end);
                 tooltip.style.display = "block";
                 tooltip.style.left = `${pos}px`;
@@ -2708,6 +2732,19 @@ export function VidPlayer({
                   ? `${seg.label} · ${formatTime(time)}`
                   : formatTime(time);
               }
+            }}
+            onPointerUp={(event) => {
+              isScrubbingRef.current = false;
+              try {
+                event.currentTarget.releasePointerCapture?.(event.pointerId);
+              } catch {
+                /* ignore */
+              }
+              if (hoverTooltipRef.current) hoverTooltipRef.current.style.display = "none";
+            }}
+            onPointerCancel={() => {
+              isScrubbingRef.current = false;
+              if (hoverTooltipRef.current) hoverTooltipRef.current.style.display = "none";
             }}
             onMouseLeave={() => {
               if (hoverTooltipRef.current) hoverTooltipRef.current.style.display = "none";
@@ -2762,8 +2799,8 @@ export function VidPlayer({
               })}
               <div
                 ref={progressThumbRef}
-                className="absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full bg-white shadow-[0_1px_6px_rgba(0,0,0,0.6)] transition-transform group-hover/seek:scale-110"
-                style={{ left: "0%", marginLeft: "-7px" }}
+                className="absolute top-1/2 h-4 w-4 sm:h-3.5 sm:w-3.5 -translate-y-1/2 -ml-2 sm:-ml-[7px] rounded-full bg-white shadow-[0_1px_6px_rgba(0,0,0,0.6)] transition-transform group-hover/seek:scale-110"
+                style={{ left: "0%" }}
               />
             </div>
             <div
@@ -2774,18 +2811,18 @@ export function VidPlayer({
           </div>
 
           {/* Control row */}
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-between gap-1.5 sm:gap-2">
             <div className="flex min-w-0 items-center gap-0.5 sm:gap-1">
               <button
                 type="button"
                 onClick={togglePlay}
                 aria-label={isPlaying ? "Pause" : "Play"}
-                className="mr-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-black shadow-lg transition hover:bg-white/85"
+                className="mr-0.5 sm:mr-1 flex h-8 w-8 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-full bg-white text-black shadow-lg transition hover:bg-white/85"
               >
                 {isPlaying ? (
-                  <Pause className="h-[18px] w-[18px] fill-current" />
+                  <Pause className="h-4 w-4 sm:h-[18px] sm:w-[18px] fill-current" />
                 ) : (
-                  <Play className="ml-0.5 h-[18px] w-[18px] fill-current" />
+                  <Play className="ml-0.5 h-4 w-4 sm:h-[18px] sm:w-[18px] fill-current" />
                 )}
               </button>
 
@@ -2813,12 +2850,12 @@ export function VidPlayer({
                   type="button"
                   onClick={toggleMute}
                   aria-label={isMuted ? "Unmute" : "Mute"}
-                  className="flex h-9 w-9 items-center justify-center rounded-lg text-white/75 transition hover:bg-white/10 hover:text-white"
+                  className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-lg text-white/75 transition hover:bg-white/10 hover:text-white"
                 >
                   {isMuted || volume === 0 ? (
-                    <VolumeX className="h-[18px] w-[18px]" />
+                    <VolumeX className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
                   ) : (
-                    <Volume2 className="h-[18px] w-[18px]" />
+                    <Volume2 className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />
                   )}
                 </button>
                 <input
@@ -2829,16 +2866,16 @@ export function VidPlayer({
                   value={isMuted ? 0 : volume}
                   onChange={(event) => changeVolume(parseFloat(event.target.value))}
                   aria-label="Volume"
-                  className="vp-range w-16 cursor-pointer sm:w-20"
+                  className="vp-range hidden w-16 cursor-pointer sm:block sm:w-20"
                   style={{ "--accent": accentColor } as React.CSSProperties}
                 />
               </div>
 
-              <div className="ml-1.5 hidden font-mono text-[11px] tabular-nums text-white/45 sm:block">
+              <div className="ml-1 sm:ml-1.5 flex items-center font-mono text-[10px] sm:text-[11px] tabular-nums text-white/50">
                 <span ref={timeCurrentTextRef} className="text-white/90">
                   0:00
                 </span>
-                <span className="mx-1 text-white/25">/</span>
+                <span className="mx-0.5 sm:mx-1 text-white/25">/</span>
                 <span ref={timeDurationTextRef}>{formatTime(duration)}</span>
               </div>
             </div>
@@ -2849,9 +2886,9 @@ export function VidPlayer({
                   type="button"
                   onClick={openEpisodes}
                   title="Episodes (E)"
-                  className="flex h-9 items-center gap-1.5 rounded-lg px-2 text-[11.5px] font-medium text-white/75 transition hover:bg-white/10 hover:text-white"
+                  className="flex h-8 w-8 sm:h-9 sm:w-auto items-center justify-center sm:gap-1.5 rounded-lg sm:px-2 text-[11.5px] font-medium text-white/75 transition hover:bg-white/10 hover:text-white"
                 >
-                  <ListVideo className="h-[17px] w-[17px]" />
+                  <ListVideo className="h-4 w-4 sm:h-[17px] sm:w-[17px]" />
                   <span className="hidden lg:inline">Episodes</span>
                 </button>
               )}
@@ -2861,14 +2898,14 @@ export function VidPlayer({
                   type="button"
                   onClick={goNext}
                   title="Next episode"
-                  className="flex h-9 items-center gap-1.5 rounded-lg px-2 text-[11.5px] font-medium text-white/75 transition hover:bg-white/10 hover:text-white"
+                  className="flex h-8 w-8 sm:h-9 sm:w-auto items-center justify-center sm:gap-1.5 rounded-lg sm:px-2 text-[11.5px] font-medium text-white/75 transition hover:bg-white/10 hover:text-white"
                 >
-                  <SkipForward className="h-[17px] w-[17px]" />
+                  <SkipForward className="h-4 w-4 sm:h-[17px] sm:w-[17px]" />
                   <span className="hidden lg:inline">Next</span>
                 </button>
               )}
 
-              <span className="mx-1 hidden h-4 w-px bg-white/15 sm:block" />
+              <span className="mx-0.5 sm:mx-1 hidden h-4 w-px bg-white/15 sm:block" />
 
               {/* Audio */}
               <div className="relative" data-player-menu>
@@ -2877,20 +2914,21 @@ export function VidPlayer({
                   onClick={() => setMenu(menu === "audio" ? null : "audio")}
                   aria-label="Audio and language"
                   title="Audio & language"
-                  className={`flex h-9 items-center gap-1.5 rounded-lg px-2 text-[11.5px] font-medium transition ${menu === "audio"
+                  className={`flex h-8 w-8 sm:h-9 sm:w-auto items-center justify-center sm:gap-1.5 rounded-lg sm:px-2 text-[11.5px] font-medium transition ${menu === "audio"
                       ? "bg-white/[0.15] text-white"
                       : "text-white/75 hover:bg-white/10 hover:text-white"
                     }`}
                 >
-                  <Mic className="h-[17px] w-[17px]" />
+                  <Mic className="h-4 w-4 sm:h-[17px] sm:w-[17px]" />
                   <span className="hidden md:inline">Audio</span>
                 </button>
 
                 {menu === "audio" && (
                   <div
                     role="menu"
-                    className="wv-menu absolute bottom-full right-0 z-50 mb-3 w-[19rem] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-2xl border border-white/10 bg-[#15141a]/[0.98] shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)] backdrop-blur-xl max-sm:fixed max-sm:inset-x-3 max-sm:bottom-24 max-sm:mb-0 max-sm:w-auto"
+                    className="wv-menu z-50 overflow-hidden bg-[#15141a]/[0.98] backdrop-blur-2xl shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)] max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:w-full max-sm:max-h-[82vh] max-sm:rounded-t-2xl max-sm:border-t max-sm:border-white/15 max-sm:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:absolute sm:bottom-full sm:right-0 sm:mb-3 sm:w-[19rem] sm:max-w-[calc(100vw-1.5rem)] sm:rounded-2xl sm:border sm:border-white/10"
                   >
+                    <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-white/20 sm:hidden" />
                     <MenuBar
                       icon={<Mic className="h-4 w-4" />}
                       title="Audio & language"
@@ -2898,7 +2936,7 @@ export function VidPlayer({
                       accentColor={accentColor}
                       onClose={() => setMenu(null)}
                     />
-                    <div className="max-h-[52vh] overflow-y-auto p-2">
+                    <div className="max-h-[48vh] sm:max-h-[52vh] overflow-y-auto overscroll-contain p-2">
                       {/* 1. Embedded HLS audio tracks on active stream (e.g. Vidzy Français/English/Occitan, Vixsrc Italian/English) */}
                       {audioOptions.length > 0 && (
                         <>
@@ -3008,14 +3046,14 @@ export function VidPlayer({
                   }}
                   aria-label="Subtitles"
                   title="Subtitles"
-                  className={`relative flex h-9 items-center gap-1.5 rounded-lg px-2 text-[11.5px] font-medium transition ${menu === "subtitles"
+                  className={`relative flex h-8 w-8 sm:h-9 sm:w-auto items-center justify-center sm:gap-1.5 rounded-lg sm:px-2 text-[11.5px] font-medium transition ${menu === "subtitles"
                       ? "bg-white/[0.15] text-white"
                       : subtitlesEnabled
                         ? "text-white hover:bg-white/10"
                         : "text-white/75 hover:bg-white/10 hover:text-white"
                     }`}
                 >
-                  <Captions className="h-[17px] w-[17px]" />
+                  <Captions className="h-4 w-4 sm:h-[17px] sm:w-[17px]" />
                   <span className="hidden md:inline">Subtitles</span>
                   {subtitlesEnabled && (
                     <span
@@ -3028,8 +3066,9 @@ export function VidPlayer({
                 {menu === "subtitles" && (
                   <div
                     role="menu"
-                    className="wv-menu absolute bottom-full right-0 z-50 mb-3 flex max-h-[72vh] w-[23.5rem] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#15141a]/[0.98] shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)] backdrop-blur-xl max-sm:fixed max-sm:inset-x-3 max-sm:bottom-24 max-sm:mb-0 max-sm:w-auto"
+                    className="wv-menu z-50 flex max-h-[82vh] sm:max-h-[72vh] flex-col overflow-hidden bg-[#15141a]/[0.98] backdrop-blur-2xl shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)] max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:w-full max-sm:rounded-t-2xl max-sm:border-t max-sm:border-white/15 max-sm:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:absolute sm:bottom-full sm:right-0 sm:mb-3 sm:w-[23.5rem] sm:max-w-[calc(100vw-1.5rem)] sm:rounded-2xl sm:border sm:border-white/10"
                   >
+                    <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-white/20 sm:hidden" />
                     <MenuBar
                       icon={<Captions className="h-4 w-4" />}
                       title="Subtitles"
@@ -3042,7 +3081,7 @@ export function VidPlayer({
                       onClose={() => setMenu(null)}
                     />
 
-                    <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2 shrink-0 bg-[#15141a]">
                       <div className="flex gap-1">
                         {(["tracks", "style"] as const).map((tab) => (
                           <button
@@ -3068,7 +3107,7 @@ export function VidPlayer({
 
                     {subTab === "tracks" ? (
                       <div className="flex flex-1 flex-col overflow-hidden">
-                        <div className="grid gap-2 border-b border-white/10 p-2.5 sm:grid-cols-2">
+                        <div className="grid gap-2 border-b border-white/10 p-2.5 sm:grid-cols-2 shrink-0">
                           <label className="block">
                             <span className="mb-1 block font-mono text-[9px] uppercase tracking-[0.14em] text-white/40">
                               Language
@@ -3107,7 +3146,7 @@ export function VidPlayer({
                           </label>
                         </div>
 
-                        <div className="max-h-[40vh] flex-1 overflow-y-auto p-1.5">
+                        <div className="max-h-[45vh] sm:max-h-[40vh] flex-1 overflow-y-auto overscroll-contain p-1.5">
                           <button
                             type="button"
                             onClick={() => {
@@ -3295,12 +3334,12 @@ export function VidPlayer({
                   onClick={() => setMenu(menu === "servers" ? null : "servers")}
                   aria-label="Servers"
                   title="Servers"
-                  className={`flex h-9 items-center gap-1.5 rounded-lg px-2 text-[11.5px] font-medium transition ${menu === "servers"
+                  className={`flex h-8 w-8 sm:h-9 sm:w-auto items-center justify-center sm:gap-1.5 rounded-lg sm:px-2 text-[11.5px] font-medium transition ${menu === "servers"
                       ? "bg-white/[0.15] text-white"
                       : "text-white/75 hover:bg-white/10 hover:text-white"
                     }`}
                 >
-                  <Server className="h-[17px] w-[17px]" />
+                  <Server className="h-4 w-4 sm:h-[17px] sm:w-[17px]" />
                   <span className="hidden md:inline">Servers</span>
                   {serverGroups.length > 0 && (
                     <span className="hidden rounded bg-white/10 px-1.5 py-0.5 font-mono text-[9px] text-white/60 lg:inline">
@@ -3312,8 +3351,9 @@ export function VidPlayer({
                 {menu === "servers" && (
                   <div
                     role="menu"
-                    className="wv-menu absolute bottom-full right-0 z-50 mb-3 flex max-h-[70vh] w-[22.5rem] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#15141a]/[0.98] shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)] backdrop-blur-xl max-sm:fixed max-sm:inset-x-3 max-sm:bottom-24 max-sm:mb-0 max-sm:w-auto"
+                    className="wv-menu z-50 flex max-h-[82vh] sm:max-h-[70vh] flex-col overflow-hidden bg-[#15141a]/[0.98] backdrop-blur-2xl shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)] max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:w-full max-sm:rounded-t-2xl max-sm:border-t max-sm:border-white/15 max-sm:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:absolute sm:bottom-full sm:right-0 sm:mb-3 sm:w-[22.5rem] sm:max-w-[calc(100vw-1.5rem)] sm:rounded-2xl sm:border sm:border-white/10"
                   >
+                    <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-white/20 sm:hidden" />
                     <MenuBar
                       icon={<Server className="h-4 w-4" />}
                       title="Servers"
@@ -3338,7 +3378,7 @@ export function VidPlayer({
                       }
                     />
 
-                    <div className="flex-1 overflow-y-auto p-2">
+                    <div className="flex-1 max-h-[50vh] sm:max-h-[55vh] overflow-y-auto overscroll-contain p-2">
                       {loadingStreams ? (
                         <p className="py-6 text-center text-[12px] text-white/50">
                           Looking for servers…
@@ -3421,20 +3461,21 @@ export function VidPlayer({
                   onClick={() => setMenu(menu === "settings" ? null : "settings")}
                   aria-label="Playback settings"
                   title="Settings"
-                  className={`flex h-9 items-center gap-1.5 rounded-lg px-2 text-[11.5px] font-medium transition ${menu === "settings"
+                  className={`flex h-8 w-8 sm:h-9 sm:w-auto items-center justify-center sm:gap-1.5 rounded-lg sm:px-2 text-[11.5px] font-medium transition ${menu === "settings"
                       ? "bg-white/[0.15] text-white"
                       : "text-white/75 hover:bg-white/10 hover:text-white"
                     }`}
                 >
-                  <Settings className="h-[17px] w-[17px]" />
+                  <Settings className="h-4 w-4 sm:h-[17px] sm:w-[17px]" />
                   <span className="hidden md:inline">Settings</span>
                 </button>
 
                 {menu === "settings" && (
                   <div
                     role="menu"
-                    className="wv-menu absolute bottom-full right-0 z-50 mb-3 w-[20rem] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-2xl border border-white/10 bg-[#15141a]/[0.98] shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)] backdrop-blur-xl max-sm:fixed max-sm:inset-x-3 max-sm:bottom-24 max-sm:mb-0 max-sm:w-auto"
+                    className="wv-menu z-50 flex max-h-[82vh] sm:max-h-[70vh] flex-col overflow-hidden bg-[#15141a]/[0.98] backdrop-blur-2xl shadow-[0_24px_70px_-20px_rgba(0,0,0,0.95)] max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:w-full max-sm:rounded-t-2xl max-sm:border-t max-sm:border-white/15 max-sm:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:absolute sm:bottom-full sm:right-0 sm:mb-3 sm:w-[20rem] sm:max-w-[calc(100vw-1.5rem)] sm:rounded-2xl sm:border sm:border-white/10"
                   >
+                    <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-white/20 sm:hidden" />
                     <MenuBar
                       icon={<Settings className="h-4 w-4" />}
                       title="Playback"
@@ -3447,7 +3488,7 @@ export function VidPlayer({
                       onClose={() => setMenu(null)}
                     />
 
-                    <div className="max-h-[54vh] overflow-y-auto p-2">
+                    <div className="max-h-[50vh] sm:max-h-[54vh] overflow-y-auto overscroll-contain p-2">
                       <MenuLabel>Quality</MenuLabel>
                       {levels.length > 0 ? (
                         <>
@@ -3534,9 +3575,9 @@ export function VidPlayer({
                 onClick={toggleFullscreen}
                 aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
                 title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-                className="flex h-9 w-9 items-center justify-center rounded-lg text-white/75 transition hover:bg-white/10 hover:text-white"
+                className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-lg text-white/75 transition hover:bg-white/10 hover:text-white"
               >
-                {isFullscreen ? <Minimize className="h-[18px] w-[18px]" /> : <Maximize className="h-[18px] w-[18px]" />}
+                {isFullscreen ? <Minimize className="h-4 w-4 sm:h-[18px] sm:w-[18px]" /> : <Maximize className="h-4 w-4 sm:h-[18px] sm:w-[18px]" />}
               </button>
             </div>
           </div>
@@ -3546,18 +3587,18 @@ export function VidPlayer({
       {/* Episode browser */}
       {episodesOpen && (
         <div
-          className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 p-3 backdrop-blur-sm sm:p-6"
+          className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-0 sm:p-6"
           onClick={() => setEpisodesOpen(false)}
         >
           <div
             role="dialog"
             aria-label="Episodes"
-            className="flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#15141a]/[0.98] shadow-2xl"
+            className="flex h-full sm:h-auto sm:max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-none sm:rounded-2xl border-0 sm:border border-white/10 bg-[#131217] sm:bg-[#15141a]/[0.98] shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+            <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sticky top-0 bg-[#131217] z-10">
               <div className="min-w-0">
-                <p className="truncate text-[13px] font-semibold text-white">{title}</p>
+                <p className="truncate text-sm sm:text-base font-semibold text-white">{title}</p>
                 <p className="text-[10.5px] text-white/45">
                   {seasonList.length || 1} season{seasonList.length === 1 ? "" : "s"}
                 </p>
@@ -3566,14 +3607,14 @@ export function VidPlayer({
                 type="button"
                 onClick={() => setEpisodesOpen(false)}
                 aria-label="Close episodes"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white/40 transition hover:bg-white/10 hover:text-white"
+                className="flex h-8 w-8 sm:h-7 sm:w-7 shrink-0 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/10 hover:text-white"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
 
             {seasonList.length > 1 && (
-              <div className="flex items-center gap-1 overflow-x-auto border-b border-white/10 px-3 py-2">
+              <div className="flex items-center gap-1 overflow-x-auto border-b border-white/10 px-3 py-2 scrollbar-none shrink-0 bg-[#131217]">
                 {seasonList.map((item) => (
                   <button
                     key={item.season}
@@ -3591,7 +3632,7 @@ export function VidPlayer({
               </div>
             )}
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-2">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 sm:p-3">
               {episodeLoading ? (
                 <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-white/50">
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading episodes…
@@ -3614,10 +3655,10 @@ export function VidPlayer({
                       href={href || undefined}
                       onClick={() => setEpisodesOpen(false)}
                       aria-current={current ? "true" : undefined}
-                      className={`flex items-start gap-3 rounded-xl p-2 transition ${current ? "bg-white/[0.08]" : "hover:bg-white/[0.05]"
+                      className={`flex items-start gap-2.5 sm:gap-3 rounded-xl p-2 sm:p-2.5 transition ${current ? "bg-white/[0.09]" : "hover:bg-white/[0.05]"
                         }`}
                     >
-                      <div className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-md bg-white/5 sm:w-28">
+                      <div className="relative aspect-video w-20 sm:w-28 shrink-0 overflow-hidden rounded-md bg-white/5">
                         {item.still ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
@@ -3637,16 +3678,16 @@ export function VidPlayer({
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-[12.5px] font-semibold text-white">
+                        <p className="truncate text-xs sm:text-[12.5px] font-semibold text-white">
                           {item.episode}. {item.name}
                         </p>
-                        <p className="mt-0.5 line-clamp-2 text-[10.5px] leading-relaxed text-white/45">
+                        <p className="mt-0.5 line-clamp-2 text-[10px] sm:text-[10.5px] leading-relaxed text-white/45">
                           {item.overview || "No description yet."}
                         </p>
                       </div>
                       {current && (
                         <span
-                          className="shrink-0 rounded px-1.5 py-0.5 text-[9.5px] font-semibold"
+                          className="shrink-0 rounded px-1.5 py-0.5 text-[9px] sm:text-[9.5px] font-semibold"
                           style={{ backgroundColor: `${accentColor}33`, color: accentColor }}
                         >
                           Now
@@ -3684,7 +3725,7 @@ function MenuBar({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-3 border-b border-white/10 px-3.5 py-3">
+    <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-white/10 bg-[#15141a] px-3.5 py-3">
       <div className="flex min-w-0 items-center gap-2.5">
         <span
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
@@ -3705,7 +3746,7 @@ function MenuBar({
           type="button"
           onClick={onClose}
           aria-label="Close menu"
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-white/40 transition hover:bg-white/10 hover:text-white"
+          className="flex h-8 w-8 sm:h-7 sm:w-7 items-center justify-center rounded-lg text-white/40 transition hover:bg-white/10 hover:text-white"
         >
           <X className="h-4 w-4" />
         </button>
