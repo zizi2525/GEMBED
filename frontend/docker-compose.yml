@@ -1,0 +1,10 @@
+services:
+  vidsuper:
+    build: .
+    # Or pull a prebuilt image instead of building:
+    # image: ghcr.io/YOUR_USERNAME/vidsuper:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env

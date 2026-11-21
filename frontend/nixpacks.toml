@@ -1,0 +1,19 @@
+# Nixpacks build plan for the Next.js player frontend.
+# Deploy this directory as its own service (e.g. Railway root directory = frontend/).
+# A nixpacks.toml is used automatically when it sits in the app root.
+
+[phases.setup]
+# Next.js 16 needs Node >= 20.9.
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+# Dev dependencies (typescript, tailwind, postcss) are needed for the build,
+# so force them in even if NODE_ENV=production is present in the build env.
+cmds = ["npm ci --include=dev --no-audit --no-fund || npm install --include=dev --no-audit --no-fund"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+# next start binds to the platform-provided $PORT (default 3000) on 0.0.0.0.
+cmd = "npm run start"
