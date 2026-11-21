@@ -1,0 +1,35 @@
+{
+  "defaultProviders": [],
+  "configVersion": 1,
+  "tmdbApiKeys": [
+    "d692e1d396f03a73c51a74e9b04072c8"
+  ],
+  "enableShowboxProvider": true,
+  "febboxCookies": [
+    "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpYXQiOjE3OTUxODcxMzIsIm5iZiI6MTc5NTE4NzEzMiwiZXhwIjoxODI2MjkxMTUyLCJkYXRhIjp7InVpZCI6MjU4NzA5MSwidG9rZW4iOiIyNDhmZTY0NmMwNjcwOGRjNzgwM2U2ZjRmN2E2Njg2OSJ9fQ.7b8YY8fLA4IKprcJRg3s3CoaDDA6wyOg_HiZHP5D0E0"
+  ],
+  "enable4khdhubProvider": false,
+  "enableVixsrcProvider": true,
+  "enableProxy": true,
+  "disableCache": false,
+  "enablePStreamApi": true,
+  "disableUrlValidation": false,
+  "disable4khdhubUrlValidation": false,
+  "excludeCodecsRaw": "{\"excludeDV\":false,\"excludeHDR\":false}",
+  "minQualitiesRaw": "all",
+  "enableUhdmoviesProvider": false,
+  "enableVidlinkProvider": true,
+  "enableVideasyProvider": true,
+  "enableVidzyProvider": true,
+  "enableLordflixProvider": false,
+  "enableNotorrentProvider": false,
+  "enableDahmermoviesProvider": false,
+  "port": 8787,
+  "enableStreamflixProvider": true,
+  "showboxCacheDir": "/data",
+  "maskUpstreamServers": true,
+  "serverBrandName": "Server",
+  "enableCastletvProvider": false,
+  "enableOnetouchtvProvider": false,
+  "enableNetmirrorProvider": false
+}
