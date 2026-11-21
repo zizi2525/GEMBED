@@ -4,6 +4,7 @@ const { URL } = require('url');
 const cheerio = require('cheerio');
 const fs = require('fs').promises;
 const path = require('path');
+const { getAgents, isExtractorProxyEnabled } = require('../utils/extractorProxy');
 
 // Configuration
 const DOMAINS_URL = 'https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json';
@@ -143,6 +144,11 @@ function makeRequest(url, options = {}) {
                 },
                 timeout: 30000
             };
+
+            if (isExtractorProxyEnabled('4khdhub')) {
+                const { httpsAgent, httpAgent } = getAgents();
+                requestOptions.agent = isHttps ? httpsAgent : httpAgent;
+            }
 
             const req = httpModule.request(requestOptions, (res) => {
                 const redirectCodes = [301, 302, 303, 307, 308];

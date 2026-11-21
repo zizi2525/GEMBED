@@ -138,6 +138,17 @@ To stop & remove:
 docker compose down
 ```
 
+### Nixpacks (Railway / Coolify / Dokploy)
+A `nixpacks.toml` is included for platforms that build with [Nixpacks](https://nixpacks.com).
+
+1. Create a service from this repository and set its **root directory** to `backend/`.
+2. Add your environment variables (`TMDB_API_KEY` or `TMDB_API_KEYS`, `FEBBOX_COOKIES`, …) in the platform dashboard.
+3. Deploy. Nixpacks installs production dependencies (`npm install --omit=dev`) and starts `node apiServer.js`.
+
+The platform-injected `PORT` is used automatically, so no port mapping is needed. `API_PORT` still takes precedence if you set it explicitly, and `BIND_HOST` defaults to `0.0.0.0`.
+
+Overrides saved from the Admin UI are written to `utils/user-config.json` on the container filesystem. On platforms with an ephemeral filesystem they reset on each redeploy — mount a persistent volume at `/app/utils` if you need them to survive.
+
 ### Switching to Multiple TMDB Keys
 Either set `TMDB_API_KEYS` to a JSON array string:
 ```bash

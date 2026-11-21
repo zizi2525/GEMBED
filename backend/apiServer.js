@@ -8,7 +8,7 @@ const path = require('path');
 const { listProviders, getProvider, getCookieStats } = require('./providers/registry');
 const { createProxyRoutes, processStreamsForProxy } = require('./proxy/proxyServer');
 const { resolveImdbId } = require('./utils/tmdb');
-const { applyFilters } = require('./utils/streamFilters');
+const { applyFilters, maskStreams, getCodename } = require('./utils/streamFilters');
 const { validateOriginMiddleware } = require('./utils/origin');
 
 const app = express();
@@ -339,7 +339,7 @@ function extractClientGeo(req) {
 }
 
 // MovieBox Client-Side Signing & Geo Endpoint
-app.get('/api/moviebox/client-headers', async (req, res) => {
+app.get(['/api/moviebox/client-headers', '/api/box/client-headers'], async (req, res) => {
   try {
     const moviebox = require('./providers/moviebox');
     const targetUrl = req.query.url || `${moviebox.HOST_POOL[0]}/wefeed-mobile-bff/user-api/visitor-login`;
@@ -406,16 +406,17 @@ app.get('/api/streams/:type/:tmdbId', async (req, res) => {
     if (config.enableProxy) {
       const serverUrl = `${req.protocol}://${req.get('host')}`;
       streams = processStreamsForProxy(streams, serverUrl);
-      // Omit original headers only when proxying to avoid leaking upstream requirements
-      streams = streams.map(s => {
-        if (s && typeof s === 'object' && !s.direct) {
-          const { headers, ...rest } = s;
-          return rest;
-        }
-        return s;
-      });
     }
-    res.json({ success: true, tmdbId, imdbId, count: streams.length, providerTimings, streams });
+    // Mask stream identities and strip internal properties
+    streams = maskStreams(streams);
+
+    // Mask providerTimings keys so upstream extractor names are never exposed
+    const maskedTimings = {};
+    for (const [k, v] of Object.entries(providerTimings)) {
+      const codename = getCodename(k).toLowerCase();
+      maskedTimings[codename] = v;
+    }
+    res.json({ success: true, tmdbId, imdbId, count: streams.length, providerTimings: maskedTimings, streams });
   } catch (e) {
     metrics.lastError = e.message;
     res.status(500).json({ success: false, error: 'INTERNAL_ERROR', message: e.message });
@@ -438,22 +439,18 @@ app.get('/api/streams/:provider/:type/:tmdbId', async (req, res) => {
     const imdbId = await resolveImdbId(tmdbType, tmdbId); if (imdbId) metrics.tmdbToImdbLookups++;
     const clientGeo = extractClientGeo(req);
     const t0 = Date.now();
+    const codename = getCodename(prov.name);
+    const codenameLower = codename.toLowerCase();
     let streams = await prov.fetch({ tmdbId, type, season, episode, imdbId, lang: req.query.lang, clientGeo, filters: {} });
-    const providerTimings = { [prov.name]: Date.now() - t0 };
+    const providerTimings = { [codenameLower]: Date.now() - t0 };
     streams = applyFilters(streams, prov.name, config.minQualities, config.excludeCodecs);
     metrics.streamsReturned += streams.length;
     if (config.enableProxy) {
       const serverUrl = `${req.protocol}://${req.get('host')}`;
       streams = processStreamsForProxy(streams, serverUrl);
-      streams = streams.map(s => {
-        if (s && typeof s === 'object' && !s.direct) {
-          const { headers, ...rest } = s;
-          return rest;
-        }
-        return s;
-      });
     }
-    res.json({ success: true, provider: prov.name, tmdbId, imdbId, count: streams.length, providerTimings, streams });
+    streams = maskStreams(streams, { codename });
+    res.json({ success: true, provider: codenameLower, tmdbId, imdbId, count: streams.length, providerTimings, streams });
   } catch (e) {
     metrics.lastError = e.message;
     res.status(500).json({ success: false, error: 'INTERNAL_ERROR', message: e.message });

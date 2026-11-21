@@ -136,9 +136,18 @@ function isProviderEnabled(name) {
 
 function listProviders() { return providers.map(p => ({ name: p.name, enabled: isProviderEnabled(p.name) })); }
 function getProvider(name) {
-  const lower = name.toLowerCase();
+  if (!name || typeof name !== 'string') return null;
+  const lower = name.toLowerCase().trim();
   let normalized = lower;
-  if (lower === 'vidy' && !providers.some(p => p.name === 'vidy')) normalized = 'videasy';
+  if (lower === 'box') normalized = 'moviebox';
+  else if (lower === 'sunny') normalized = 'netmirror';
+  else if (lower === 'ari') normalized = 'vixsrc';
+  else if (lower === 'nova') normalized = 'vidzy';
+  else if (lower === 'titan') normalized = 'videasy';
+  else if (lower === 'hub') normalized = '4khdhub';
+  else if (lower === 'cloud') normalized = 'showbox';
+  else if (lower === 'apex') normalized = 'dahmer';
+  else if (lower === 'vidy' && !providers.some(p => p.name === 'vidy')) normalized = 'videasy';
   else if (lower === 'vidzt' && !providers.some(p => p.name === 'vidzt')) normalized = 'vidzy';
   const p = providers.find(p => p.name === normalized);
   if (!p) return null;

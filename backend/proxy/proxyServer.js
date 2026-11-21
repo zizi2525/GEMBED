@@ -3,6 +3,7 @@
 
 const cors = require('cors');
 const fetch = require('node-fetch');
+const crypto = require('crypto');
 const { validateOriginMiddleware, setCorsHeaders } = require('../utils/origin');
 const { config } = require('../utils/config');
 
@@ -101,6 +102,70 @@ function inferContentType(upstreamCT, targetUrl = '') {
     return 'video/mp2t';
 }
 
+function getSecretKey() {
+    const secret = process.env.APP_SECRET || 'embed-gibox-default-secret-key-32b';
+    if (secret.length === 64 && /^[0-9a-fA-F]+$/.test(secret)) {
+        return Buffer.from(secret, 'hex');
+    }
+    return crypto.createHash('sha256').update(secret).digest();
+}
+
+function encryptTargetUrl(targetUrl) {
+    if (!targetUrl || typeof targetUrl !== 'string') return '';
+    try {
+        const key = getSecretKey();
+        const iv = crypto.randomBytes(12);
+        const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+        const encrypted = Buffer.concat([cipher.update(targetUrl, 'utf8'), cipher.final()]);
+        const tag = cipher.getAuthTag();
+        const combined = Buffer.concat([iv, tag, encrypted]);
+        return combined.toString('base64url');
+    } catch (e) {
+        return Buffer.from(targetUrl, 'utf8').toString('base64url');
+    }
+}
+
+function decryptTargetUrl(token) {
+    if (!token || typeof token !== 'string') return '';
+    const trimmed = token.trim();
+    // 1. Try AES-256-GCM decryption
+    try {
+        const combined = Buffer.from(trimmed, 'base64url');
+        if (combined.length >= 28) {
+            const key = getSecretKey();
+            const iv = combined.subarray(0, 12);
+            const tag = combined.subarray(12, 28);
+            const encrypted = combined.subarray(28);
+            const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+            decipher.setAuthTag(tag);
+            const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+            const result = decrypted.toString('utf8');
+            if (result.startsWith('http://') || result.startsWith('https://')) {
+                return result;
+            }
+        }
+    } catch {
+        // Fall through
+    }
+
+    // 2. Base64url / Base64 fallback
+    try {
+        const plain = Buffer.from(trimmed, 'base64url').toString('utf8');
+        if (plain.startsWith('http://') || plain.startsWith('https://')) return plain;
+    } catch {}
+    try {
+        const plain = Buffer.from(trimmed, 'base64').toString('utf8');
+        if (plain.startsWith('http://') || plain.startsWith('https://')) return plain;
+    } catch {}
+
+    // 3. Plain URL fallback
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        return trimmed;
+    }
+
+    return '';
+}
+
 function extractOriginalUrl(proxyUrl) {
     try {
         const url = new URL(proxyUrl);
@@ -111,17 +176,20 @@ function extractOriginalUrl(proxyUrl) {
                 while (decoded.includes('%2F')) {
                     try { decoded = decodeURIComponent(decoded); } catch { break; }
                 }
+                const dec = decryptTargetUrl(decoded);
+                if (dec) return dec;
                 if (decoded.startsWith('http://') || decoded.startsWith('https://')) return decoded;
                 return proxyUrl;
             }
         }
-        if (url.searchParams.has('url')) return decodeURIComponent(url.searchParams.get('url'));
         if (url.searchParams.has('u')) {
-            try {
-                return Buffer.from(url.searchParams.get('u'), 'base64url').toString('utf8');
-            } catch {
-                try { return Buffer.from(url.searchParams.get('u'), 'base64').toString('utf8'); } catch {}
-            }
+            const dec = decryptTargetUrl(url.searchParams.get('u'));
+            if (dec) return dec;
+        }
+        if (url.searchParams.has('url')) {
+            const dec = decryptTargetUrl(url.searchParams.get('url'));
+            if (dec) return dec;
+            return decodeURIComponent(url.searchParams.get('url'));
         }
         const patterns = [
             /\/api\/[^/]+\/proxy\?url=(.+)$/,
@@ -130,21 +198,29 @@ function extractOriginalUrl(proxyUrl) {
             /\/p\/(.+)$/
         ];
         for (const p of patterns) {
-            const m = proxyUrl.match(p); if (m) return decodeURIComponent(m[1]);
+            const m = proxyUrl.match(p); if (m) {
+                const dec = decryptTargetUrl(m[1]);
+                if (dec) return dec;
+                return decodeURIComponent(m[1]);
+            }
         }
         return proxyUrl;
     } catch { return proxyUrl; }
 }
 
 function extractTargetAndHeaders(req) {
-    let targetUrl = req.query.url;
+    let targetUrl = '';
     let headers = {};
 
-    if (!targetUrl && req.query.u) {
-        try {
-            targetUrl = Buffer.from(req.query.u, 'base64url').toString('utf8');
-        } catch {
-            try { targetUrl = Buffer.from(req.query.u, 'base64').toString('utf8'); } catch {}
+    if (req.query.u) {
+        targetUrl = decryptTargetUrl(req.query.u);
+    }
+    if (!targetUrl && req.query.url) {
+        if (!req.query.url.startsWith('http://') && !req.query.url.startsWith('https://')) {
+            targetUrl = decryptTargetUrl(req.query.url);
+        }
+        if (!targetUrl) {
+            targetUrl = req.query.url;
         }
     }
 
@@ -197,7 +273,7 @@ function rewriteM3u8(content, targetUrl, baseProxyUrl, headers) {
     const lines = content.split(/\r?\n/);
     const out = [];
     const segmentUrls = [];
-    const headersParam = headers && Object.keys(headers).length ? `&headers=${encodeURIComponent(JSON.stringify(headers))}` : '';
+    const headersParam = headers && Object.keys(headers).length ? `&h=${Buffer.from(JSON.stringify(headers)).toString('base64url')}` : '';
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
@@ -213,7 +289,7 @@ function rewriteM3u8(content, targetUrl, baseProxyUrl, headers) {
             if (trimmed.startsWith('#EXT-X-MAP:')) {
                 const rewritten = trimmed.replace(/URI="([^"]+)"/, (_, uri) => {
                     const abs = resolveChildUrl(uri, targetUrl);
-                    const proxyUrl = `${baseProxyUrl}/ts-proxy?url=${encodeURIComponent(abs)}${headersParam}`;
+                    const proxyUrl = `${baseProxyUrl}/ts-proxy?u=${encryptTargetUrl(abs)}${headersParam}`;
                     return `URI="${proxyUrl}"`;
                 });
                 out.push(rewritten);
@@ -224,7 +300,7 @@ function rewriteM3u8(content, targetUrl, baseProxyUrl, headers) {
             if (trimmed.startsWith('#EXT-X-KEY:')) {
                 const rewritten = trimmed.replace(/URI="([^"]+)"/, (_, uri) => {
                     const abs = resolveChildUrl(uri, targetUrl);
-                    const proxyUrl = `${baseProxyUrl}/ts-proxy?url=${encodeURIComponent(abs)}${headersParam}`;
+                    const proxyUrl = `${baseProxyUrl}/ts-proxy?u=${encryptTargetUrl(abs)}${headersParam}`;
                     if (!isCacheDisabled()) prefetchSegment(abs, headers);
                     return `URI="${proxyUrl}"`;
                 });
@@ -238,7 +314,7 @@ function rewriteM3u8(content, targetUrl, baseProxyUrl, headers) {
                     const abs = resolveChildUrl(uri, targetUrl);
                     const isM3u8 = /\.m3u8(\?|$)/i.test(abs) || trimmed.includes('TYPE=SUBTITLES') || trimmed.includes('TYPE=AUDIO');
                     const endpoint = isM3u8 ? 'm3u8-proxy' : 'ts-proxy';
-                    const proxyUrl = `${baseProxyUrl}/${endpoint}?url=${encodeURIComponent(abs)}${headersParam}`;
+                    const proxyUrl = `${baseProxyUrl}/${endpoint}?u=${encryptTargetUrl(abs)}${headersParam}`;
                     return `URI="${proxyUrl}"`;
                 });
                 out.push(rewritten);
@@ -254,10 +330,10 @@ function rewriteM3u8(content, targetUrl, baseProxyUrl, headers) {
             const abs = resolveChildUrl(trimmed, targetUrl);
             const isSubPlaylist = isMaster || /\.m3u8(\?|$)/i.test(abs);
             if (isSubPlaylist) {
-                out.push(`${baseProxyUrl}/m3u8-proxy?url=${encodeURIComponent(abs)}${headersParam}`);
+                out.push(`${baseProxyUrl}/m3u8-proxy?u=${encryptTargetUrl(abs)}${headersParam}`);
             } else {
                 segmentUrls.push(abs);
-                out.push(`${baseProxyUrl}/ts-proxy?url=${encodeURIComponent(abs)}${headersParam}`);
+                out.push(`${baseProxyUrl}/ts-proxy?u=${encryptTargetUrl(abs)}${headersParam}`);
             }
         } catch {
             out.push(line);
@@ -525,31 +601,60 @@ function processStreamsForProxy(streams, serverUrl) {
 
         const original = extractOriginalUrl(s.url);
         const headers = s.headers || {};
-        const hParam = Object.keys(headers).length ? `&headers=${encodeURIComponent(JSON.stringify(headers))}` : '';
+        const hParam = Object.keys(headers).length ? `&h=${Buffer.from(JSON.stringify(headers)).toString('base64url')}` : '';
         let host = '';
         try {
             host = new URL(original).hostname.toLowerCase();
         } catch {}
 
         // Direct file hosts routed through ts-proxy, HLS through m3u8-proxy
-        const isTs = host.includes('pixeldrain.') || host === 'video-downloads.googleusercontent.com' || /\.(mp4|mkv)(\?|$)/i.test(original);
+        const isTs = host.includes('pixeldrain.') || host === 'video-downloads.googleusercontent.com' || host.includes('hakunaymatata.') || host.includes('aoneroom.') || /\.(mp4|mkv)(\?|$)/i.test(original);
         const endpoint = isTs ? 'ts-proxy' : 'm3u8-proxy';
 
-        // Our backend proxy endpoint URL
-        const backendProxyUrl = `${publicServerUrl}/${endpoint}?url=${encodeURIComponent(original)}${hParam}`;
+        // Encrypted URL parameter so raw upstream CDN domain and path are never exposed
+        const encToken = encryptTargetUrl(original);
+        const backendProxyUrl = `${publicServerUrl}/${endpoint}?u=${encToken}${hParam}`;
 
         // When Cloudflare Stream Proxy is configured, Cloudflare proxies OUR stream proxy!
         // (Browser -> Cloudflare Edge -> Our Backend /ts-proxy -> Upstream CDN)
+        let finalUrl = backendProxyUrl;
         if (cfProxy) {
-            return {
-                ...s,
-                url: `${cfProxy}/?url=${encodeURIComponent(backendProxyUrl)}`,
-                direct: false
-            };
+            finalUrl = `${cfProxy}/?url=${encodeURIComponent(backendProxyUrl)}`;
         }
 
-        return { ...s, url: backendProxyUrl, direct: false };
+        // Mask and proxy subtitles so upstream CDN domains and paths are never exposed
+        let proxiedSubs = s.subtitles;
+        if (Array.isArray(proxiedSubs)) {
+            proxiedSubs = proxiedSubs.map((sub, sIdx) => {
+                if (!sub || typeof sub !== 'object') return sub;
+                const rawSubUrl = sub.url || sub.file || '';
+                const maskedSubId = `sub-${(sub.lang || 'cc').toLowerCase()}-${sIdx + 1}`;
+                if (typeof rawSubUrl === 'string' && (rawSubUrl.startsWith('http://') || rawSubUrl.startsWith('https://'))) {
+                    const proxiedUrl = `${publicServerUrl}/sub-proxy?u=${encryptTargetUrl(rawSubUrl)}`;
+                    return {
+                        ...sub,
+                        id: maskedSubId,
+                        url: proxiedUrl,
+                        ...(sub.file ? { file: proxiedUrl } : {})
+                    };
+                }
+                return { ...sub, id: maskedSubId };
+            });
+        }
+
+        return {
+            ...s,
+            url: finalUrl,
+            direct: false,
+            ...(proxiedSubs ? { subtitles: proxiedSubs } : {})
+        };
     });
 }
 
-module.exports = { createProxyRoutes, processStreamsForProxy, isStreamProxyEnabledFor };
+module.exports = {
+    createProxyRoutes,
+    processStreamsForProxy,
+    isStreamProxyEnabledFor,
+    encryptTargetUrl,
+    decryptTargetUrl
+};

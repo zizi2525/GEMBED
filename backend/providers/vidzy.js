@@ -7,6 +7,7 @@
  */
 
 const axios = require('axios');
+const { getAxiosConfig, getFetchOptions } = require('../utils/extractorProxy');
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36';
@@ -34,22 +35,22 @@ async function getText(url, headers = {}) {
   };
 
   try {
-    const res = await fetch(url, {
+    const res = await fetch(url, getFetchOptions('vidzy', {
       headers: reqHeaders,
       signal: AbortSignal.timeout(TIMEOUT),
       cache: 'no-store',
-    });
+    }));
     if (!res.ok) throw new Error(`vidzy HTTP ${res.status} on ${url}`);
     return await res.text();
   } catch (err) {
     // Fallback to axios
     try {
-      const res = await axios.get(url, {
+      const res = await axios.get(url, getAxiosConfig('vidzy', {
         headers: reqHeaders,
         timeout: TIMEOUT,
         responseType: 'text',
         validateStatus: () => true,
-      });
+      }));
       if (res.status >= 200 && res.status < 400 && res.data) {
         return typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
       }
@@ -83,10 +84,10 @@ async function gateKey() {
   const gateUrl = `https://v6.vidzy.cc/gate.php?${params.toString()}`;
 
   try {
-    const res = await fetch(gateUrl, {
+    const res = await fetch(gateUrl, getFetchOptions('vidzy', {
       headers: { 'User-Agent': UA, Referer: 'https://vidzy.cc/' },
       signal: AbortSignal.timeout(TIMEOUT),
-    });
+    }));
     if (res && res.ok) {
       const json = await res.json();
       return json && json.gk ? json.gk : null;
@@ -96,11 +97,11 @@ async function gateKey() {
   }
 
   try {
-    const res = await axios.get(gateUrl, {
+    const res = await axios.get(gateUrl, getAxiosConfig('vidzy', {
       headers: { 'User-Agent': UA, Referer: 'https://vidzy.cc/' },
       timeout: TIMEOUT,
       validateStatus: () => true,
-    });
+    }));
     return res.data && res.data.gk ? res.data.gk : null;
   } catch {
     return null;
@@ -146,10 +147,10 @@ async function resolveUncached(input) {
   let body = '';
 
   try {
-    const res = await fetch(manifest, {
+    const res = await fetch(manifest, getFetchOptions('vidzy', {
       headers: reqHeaders,
       signal: AbortSignal.timeout(TIMEOUT),
-    });
+    }));
     if (res && res.ok) {
       const rawCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
       if (rawCookies.length > 0) {
@@ -162,12 +163,12 @@ async function resolveUncached(input) {
     }
   } catch {
     try {
-      const res = await axios.get(manifest, {
+      const res = await axios.get(manifest, getAxiosConfig('vidzy', {
         headers: reqHeaders,
         timeout: TIMEOUT,
         responseType: 'text',
         validateStatus: () => true,
-      });
+      }));
       if (res.status === 200 && res.data) {
         body = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
         const sc = res.headers['set-cookie'];

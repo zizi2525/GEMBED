@@ -3,6 +3,8 @@ const { getDetails } = require('../utils/tmdb');
 const STREAM_CACHE_TTL = 25 * 60 * 1000;
 const PLATFORM_ORDER = ['netflix'];
 
+const { getFetchOptions } = require('../utils/extractorProxy');
+
 const UA_POOL = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0',
@@ -82,10 +84,10 @@ async function resolveNewTvApi() {
 
     for (const domain of domains) {
         try {
-            const response = await fetch(`${domain}/checknewtv.php`, {
+            const response = await fetch(`${domain}/checknewtv.php`, getFetchOptions('netmirror', {
                 headers: { ...newTvHeaders('nf') },
                 signal: AbortSignal.timeout(10000)
-            });
+            }));
             const data = await response.json();
             if (data.token_hash) {
                 resolvedApiUrl = Buffer.from(data.token_hash, 'base64').toString('utf8').replace(/\/$/, '');
@@ -155,7 +157,7 @@ async function fetchNetflix(tmdbId, type, title, season, episode) {
         const url = type === 'series'
             ? `${base}/api/embed-tmdb/${tmdbId}?type=tv&se=${season}&ep=${episode}`
             : `${base}/api/embed-tmdb/${tmdbId}`;
-        const response = await fetch(url, {
+        const response = await fetch(url, getFetchOptions('netmirror', {
             headers: {
                 Accept: 'application/json, text/plain, */*',
                 Referer: `${base}/`,
@@ -163,7 +165,7 @@ async function fetchNetflix(tmdbId, type, title, season, episode) {
                 'Accept-Language': nextLang()
             },
             signal: AbortSignal.timeout(20000)
-        });
+        }));
         if (!response.ok) return [];
         const data = await response.json();
         if (data.ok !== true) return [];
@@ -243,7 +245,7 @@ async function getEpisodes(api, showId, postData, config) {
         try {
             const response = await fetch(
                 `${api}/newtv/episodes.php?id=${encodeURIComponent(selectedSeasonId)}&page=2`,
-                { headers: newTvHeaders(config.ott), signal: AbortSignal.timeout(15000) }
+                getFetchOptions('netmirror', { headers: newTvHeaders(config.ott), signal: AbortSignal.timeout(15000) })
             );
             const data = await response.json();
             for (const episode of data.episodes || []) {
@@ -263,7 +265,7 @@ async function fetchPlatform(platform, title, type, season, episode) {
         const api = await resolveNewTvApi();
         const searchResponse = await fetch(
             `${api}/newtv/search.php?s=${encodeURIComponent(title)}`,
-            { headers: newTvHeaders(config.ott), signal: AbortSignal.timeout(15000) }
+            getFetchOptions('netmirror', { headers: newTvHeaders(config.ott), signal: AbortSignal.timeout(15000) })
         );
         const searchData = await searchResponse.json();
         const first = (searchData.searchResult || [])[0];
@@ -271,7 +273,7 @@ async function fetchPlatform(platform, title, type, season, episode) {
 
         const postResponse = await fetch(
             `${api}/newtv/post.php?id=${encodeURIComponent(first.id)}`,
-            { headers: newTvHeaders(config.ott, { Lastep: '', Usertoken: '' }), signal: AbortSignal.timeout(15000) }
+            getFetchOptions('netmirror', { headers: newTvHeaders(config.ott, { Lastep: '', Usertoken: '' }), signal: AbortSignal.timeout(15000) })
         );
         const postData = await postResponse.json();
 
@@ -289,7 +291,7 @@ async function fetchPlatform(platform, title, type, season, episode) {
 
         const playerResponse = await fetch(
             `${api}/newtv/player.php?id=${encodeURIComponent(targetId)}`,
-            { headers: newTvHeaders(config.ott, { Usertoken: '' }), signal: AbortSignal.timeout(15000) }
+            getFetchOptions('netmirror', { headers: newTvHeaders(config.ott, { Usertoken: '' }), signal: AbortSignal.timeout(15000) })
         );
         const player = await playerResponse.json();
         if (player.status && player.status !== 'ok') {

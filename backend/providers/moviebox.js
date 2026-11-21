@@ -3,6 +3,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { getDetails } = require('../utils/tmdb');
+const { getAxiosConfig } = require('../utils/extractorProxy');
 
 // --- Constants & Pool from MovieBox-Tui ---
 const HOST_POOL = [
@@ -46,7 +47,7 @@ async function fetchGeoData(ip = null) {
     const geoUrl = ip
       ? `https://get.geojs.io/v1/ip/geo/${encodeURIComponent(ip)}.json`
       : 'https://get.geojs.io/v1/ip/geo.json';
-    const res = await axios.get(geoUrl, { timeout: 3500 });
+    const res = await axios.get(geoUrl, getAxiosConfig('moviebox', { timeout: 3500 }));
     if (res.data && res.data.ip) {
       geoMemoryCache.set(cacheKey, {
         data: res.data,
@@ -314,7 +315,7 @@ async function fetchFreshSession(host) {
   const url = `${host}/wefeed-mobile-bff/user-api/visitor-login`;
   const bodyStr = '{}';
   const headers = buildSignedHeaders('POST', url, bodyStr, null);
-  const res = await axios.post(url, bodyStr, { headers, timeout: 6000 });
+  const res = await axios.post(url, bodyStr, getAxiosConfig('moviebox', { headers, timeout: 6000 }));
   absorbXUserHeader(res.headers);
 
   const val = res.data?.data || res.data;
@@ -360,9 +361,9 @@ async function executeApi(method, pathQuery, body = null, clientGeo = null) {
 
       let res;
       if (method.toUpperCase() === 'POST') {
-        res = await axios.post(url, bodyStr, { headers, timeout: 7000 });
+        res = await axios.post(url, bodyStr, getAxiosConfig('moviebox', { headers, timeout: 7000 }));
       } else {
-        res = await axios.get(url, { headers, timeout: 7000 });
+        res = await axios.get(url, getAxiosConfig('moviebox', { headers, timeout: 7000 }));
       }
 
       absorbXUserHeader(res.headers);

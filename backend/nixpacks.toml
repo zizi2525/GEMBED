@@ -1,0 +1,20 @@
+# Nixpacks build plan for the streaming API.
+# Deploy this directory as its own service (e.g. Railway root directory = backend/).
+# A nixpacks.toml is used automatically when it sits in the app root.
+
+[phases.setup]
+# package.json only requires >=14, but the dependency tree expects a modern LTS.
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+# The committed lockfile is known to be out of sync with package.json,
+# so install instead of ci. Runtime deps only, like the Dockerfile.
+cmds = ["npm install --omit=dev --no-audit --no-fund"]
+
+[phases.build]
+# Plain Node/Express server - nothing to compile.
+cmds = []
+
+[start]
+# The platform's PORT is honored by the config loader; API_PORT still wins if set.
+cmd = "node apiServer.js"

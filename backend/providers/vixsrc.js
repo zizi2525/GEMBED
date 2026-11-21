@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { getAxiosConfig } = require('../utils/extractorProxy');
 
 const BASE_URL = 'https://vixsrc.to';
 const VIXSRC_HEADERS = {
@@ -12,7 +13,7 @@ const VIXSRC_HEADERS = {
 // Step 1: GET /api/movie/{id} or /api/tv/{id}/{s}/{e} → { src: "/embed/..." }
 async function fetchApi(url) {
     try {
-        const response = await axios.get(url, { headers: VIXSRC_HEADERS, timeout: 10000 });
+        const response = await axios.get(url, getAxiosConfig('vixsrc', { headers: VIXSRC_HEADERS, timeout: 10000 }));
         if (response.status !== 200 || !response.data) return null;
         return response.data;
     } catch {
@@ -23,11 +24,11 @@ async function fetchApi(url) {
 // Step 2: GET BASE_URL + sublink.src → HTML embed page
 async function fetchEmbedPage(suburl) {
     try {
-        const response = await axios.get(BASE_URL + suburl, {
+        const response = await axios.get(BASE_URL + suburl, getAxiosConfig('vixsrc', {
             headers: { ...VIXSRC_HEADERS, Accept: 'text/html,application/xhtml+xml,*/*' },
             timeout: 10000,
             responseType: 'text'
-        });
+        }));
         if (response.status !== 200) return null;
         return response.data;
     } catch {

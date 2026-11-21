@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { getTmdbApiKey } = require('../utils/tmdbKey');
+const { getAxiosConfig } = require('../utils/extractorProxy');
 
 const DAHMER_MOVIES_API = 'https://a.111477.xyz';
 const DAHMER_WORKER_API = 'https://p.111477.xyz/bulk?u=';
@@ -40,11 +41,11 @@ async function fetchDirectory(title, year, season) {
 
     for (const variant of variants) {
         try {
-            const res = await axios.get(DAHMER_MOVIES_API + variant, {
+            const res = await axios.get(DAHMER_MOVIES_API + variant, getAxiosConfig('dahmer', {
                 headers: REQUEST_HEADERS,
                 timeout: 10000,
                 responseType: 'text'
-            });
+            }));
             if (res.data) return { html: res.data, dirUrl: DAHMER_MOVIES_API + variant };
         } catch {
             // try next variant

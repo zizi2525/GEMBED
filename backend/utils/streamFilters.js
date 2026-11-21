@@ -21,12 +21,14 @@ function parseQuality(qualityString) {
   if (q.includes('org')) return 4320;
   return 0;
 }
+
 function filterByMinQuality(streams, minQualitySetting) {
   if (!minQualitySetting || minQualitySetting.toLowerCase() === 'all') return streams;
   const minNumeric = parseQuality(minQualitySetting);
   if (minNumeric === 0 && minQualitySetting.toLowerCase() !== 'all') return streams;
   return streams.filter(s => parseQuality(s.quality) >= minNumeric);
 }
+
 function filterByCodecs(streams, exclude) {
   if (!exclude || (!exclude.excludeDV && !exclude.excludeHDR)) return streams;
   return streams.filter(s => {
@@ -36,6 +38,7 @@ function filterByCodecs(streams, exclude) {
     return true;
   });
 }
+
 function applyFilters(streams, providerName, minQualitiesConfig, excludeCodecsConfig) {
   let minQuality = null;
   if (minQualitiesConfig) {
@@ -47,40 +50,115 @@ function applyFilters(streams, providerName, minQualitiesConfig, excludeCodecsCo
   return filtered;
 }
 
+// Canonical codenames for upstream extractors/scrapers to prevent identity leaks
+const EXTRACTOR_CODENAMES = {
+  moviebox: 'Box',
+  movibox: 'Box',
+  box: 'Box',
+  netmirror: 'Sunny',
+  sunny: 'Sunny',
+  vixsrc: 'Ari',
+  ari: 'Ari',
+  vidzy: 'Nova',
+  vidzt: 'Nova',
+  nova: 'Nova',
+  vidy: 'Titan',
+  videasy: 'Titan',
+  titan: 'Titan',
+  '4khdhub': 'Hub',
+  hub: 'Hub',
+  dahmer: 'Apex',
+  apex: 'Apex',
+  showbox: 'Cloud',
+  cloud: 'Cloud'
+};
+
+function getCodename(name) {
+  if (!name || typeof name !== 'string') return 'Server';
+  const lower = name.toLowerCase().trim();
+  if (EXTRACTOR_CODENAMES[lower]) return EXTRACTOR_CODENAMES[lower];
+  for (const [k, v] of Object.entries(EXTRACTOR_CODENAMES)) {
+    if (lower.includes(k)) return v;
+  }
+  return 'Server';
+}
+
+/**
+ * Masks internal extractor/scraper identities across all stream fields.
+ * Replaces names with clean canonical codenames (Box, Sunny, Ari, Nova, Titan).
+ * Strips internal debugging/scraper keys (scraper, originalProvider, subjectId, etc.).
+ */
 function maskStreams(streams, options = {}) {
   if (!Array.isArray(streams)) return streams;
-  const brandName = options.brandName || 'Server';
-  let counter = 1;
-  return streams.map(s => {
+  return streams.map((s, idx) => {
     if (!s || typeof s !== 'object') return s;
 
-    // Detect if title or name has language/version info like "· English (VO) 4K"
+    // Detect provider / scraper from any existing field
+    const rawProvider = s.provider || s.scraper || s.originalProvider || s.server || '';
+    const codename = options.codename || getCodename(rawProvider);
+    const codenameLower = codename.toLowerCase();
+
+    // Extract language & quality info for clean display
+    const rawName = s.name || s.title || '';
     let suffix = '';
-    const nameStr = s.name || s.title || '';
-    if (nameStr.includes('·')) {
-      suffix = ' · ' + nameStr.split('·').slice(1).join('·').trim();
+    if (rawName.includes('·')) {
+      const parts = rawName.split('·').slice(1).map(p => p.trim()).filter(Boolean);
+      if (parts.length > 0) {
+        suffix = ' · ' + parts.join(' · ');
+      }
     } else {
       const parts = [];
-      if (s.language || s.lang) parts.push(s.language || s.lang);
-      if (s.quality) parts.push(s.quality);
-      if (parts.length > 0) suffix = ` · ${parts.join(' ')}`;
+      if (s.quality || s.qualityLabel) parts.push(s.quality || s.qualityLabel);
+      if (s.langLabel || s.language || s.lang) parts.push(s.langLabel || s.language || s.lang);
+      if (parts.length > 0) suffix = ' · ' + parts.join(' · ');
     }
 
-    const maskedTitle = `${brandName} ${counter}${suffix}`;
-    const serverId = `server-${counter}`;
-    counter++;
+    const maskedTitle = `${codename}${suffix}`;
+    const qNum = parseInt(String(s.quality || s.qualityLabel || '').match(/\d+/)?.[0] || '1080', 10);
+    const langCode = (s.lang || 'vo').toLowerCase();
+    const maskedId = `srv-${codenameLower}-${langCode}-${qNum}-${idx + 1}`;
 
-    const { scraper, originalProvider, headers, ...safeStream } = s;
+    // Strip internal extractor leak fields
+    const {
+      scraper,
+      originalProvider,
+      subjectId,
+      extractorName,
+      internalId,
+      sourceKey,
+      headers,
+      ...safeStream
+    } = s;
+
+    // Mask subtitle IDs if present so extractor-specific prefixes (like mb-sub) are stripped
+    let safeSubtitles = safeStream.subtitles;
+    if (Array.isArray(safeSubtitles)) {
+      safeSubtitles = safeSubtitles.map((sub, sIdx) => {
+        if (!sub || typeof sub !== 'object') return sub;
+        const subLang = (sub.lang || 'cc').toLowerCase();
+        return {
+          ...sub,
+          id: `sub-${subLang}-${sIdx + 1}`
+        };
+      });
+    }
+
     return {
       ...safeStream,
-      id: safeStream.id || serverId,
+      id: maskedId,
       name: maskedTitle,
       title: maskedTitle,
-      server: serverId,
+      server: codename,
       serverName: maskedTitle,
-      provider: brandName.toLowerCase(),
+      provider: codenameLower,
+      ...(safeSubtitles ? { subtitles: safeSubtitles } : {})
     };
   });
 }
 
-module.exports = { applyFilters, maskStreams };
+module.exports = {
+  applyFilters,
+  maskStreams,
+  getCodename,
+  EXTRACTOR_CODENAMES
+};
