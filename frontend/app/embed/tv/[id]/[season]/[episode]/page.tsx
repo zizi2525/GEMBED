@@ -6,6 +6,7 @@ import { PLAYER_NAME, PROMO_TEXT } from "@/lib/config";
 import {
   parseStartTime,
   resolveAccentColor,
+  resolveAnime,
   resolveAutoNext,
   resolveAutoplay,
   resolveShowEpisodes,
@@ -57,12 +58,18 @@ export default async function TvEmbedPage({
   const tmdb = await fetchTmdbDetails("tv", tmdbId);
   if (!tmdb) notFound();
 
-  const accentColor = resolveAccentColor(sp) || "#6366f1";
+  const accentColor = resolveAccentColor(sp) || "#3b82f6";
   const autoPlay = resolveAutoplay(sp);
   const startAt = parseStartTime(sp);
   const defaultLang = sp.lang || "en";
   const autoNext = resolveAutoNext(sp);
   const showEpisodes = resolveShowEpisodes(sp);
+  const isAnime =
+    resolveAnime(sp) ||
+    (tmdb.originalLanguage === "ja" &&
+      (tmdb.genres?.some((g) => g.id === 16 || g.name.toLowerCase().includes("anim")) ?? false));
+  const anilistId = sp.anilistId || sp.anilist;
+  const malId = sp.malId || sp.mal;
 
   const embedQuery = new URLSearchParams({
     accent: accentColor,
@@ -70,10 +77,14 @@ export default async function TvEmbedPage({
     lang: defaultLang,
     autonext: autoNext ? "1" : "0",
     episodes: showEpisodes ? "1" : "0",
-  }).toString();
+  });
+  if (isAnime) embedQuery.set("anime", "1");
+  if (anilistId) embedQuery.set("anilistId", anilistId);
+  if (malId) embedQuery.set("malId", malId);
+  const embedQueryStr = embedQuery.toString();
 
   const buildHref = (nextS: number, nextE: number) =>
-    `/embed/tv/${tmdbId}/${nextS}/${nextE}?${embedQuery}`;
+    `/embed/tv/${tmdbId}/${nextS}/${nextE}?${embedQueryStr}`;
 
   const currentSeason = (tmdb.seasons || []).find(
     (item: { season_number: number; episode_count?: number }) => item.season_number === s
@@ -105,9 +116,12 @@ export default async function TvEmbedPage({
     }));
 
   return (
-    <main className="h-screen w-screen overflow-hidden bg-black">
+    <main className="h-[100dvh] w-full overflow-hidden bg-black">
       <VidPlayer
         type="tv"
+        anime={isAnime}
+        anilistId={anilistId}
+        malId={malId}
         tmdbId={tmdbId}
         imdbId={tmdb.imdbId}
         season={s}
@@ -128,7 +142,7 @@ export default async function TvEmbedPage({
         showEpisodes={showEpisodes}
         seasons={seasons}
         episodesHrefBase={`/embed/tv/${tmdbId}`}
-        episodesQuery={`?${embedQuery}`}
+        episodesQuery={`?${embedQueryStr}`}
       />
     </main>
   );

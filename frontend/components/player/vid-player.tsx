@@ -103,7 +103,7 @@ import type { TvEpisode } from "@/lib/tmdb";
 
 export interface VidPlayerProps {
   type: "movie" | "tv";
-  tmdbId: number;
+  tmdbId?: number;
   imdbId?: string;
   season?: number;
   episode?: number;
@@ -132,6 +132,12 @@ export interface VidPlayerProps {
   seasons?: { season: number; name: string; episodeCount: number }[];
   /** Show the episode browser (TV only). */
   showEpisodes?: boolean;
+  /** Whether the media is an anime */
+  anime?: boolean;
+  /** Optional direct AniList ID */
+  anilistId?: number | string;
+  /** Optional direct MyAnimeList ID */
+  malId?: number | string;
 }
 
 type Menu = "servers" | "subtitles" | "audio" | "settings" | null;
@@ -309,7 +315,7 @@ export function VidPlayer({
   autoPlay = true,
   startAt = 0,
   defaultLang = "en",
-  accentColor = "#6366f1",
+  accentColor = "#3b82f6",
   promoText,
   prevHref,
   nextHref,
@@ -320,6 +326,9 @@ export function VidPlayer({
   episodesQuery = "",
   seasons: seasonList = [],
   showEpisodes = false,
+  anime,
+  anilistId,
+  malId,
 }: VidPlayerProps) {
   // Subtitle parsing happens in async callbacks, but set it on every render so
   // a changed brand line is picked up before the next cue is parsed.
@@ -331,14 +340,16 @@ export function VidPlayer({
 
   const curSeason = type === "tv" ? season || 1 : undefined;
   const curEpisode = type === "tv" ? episode || 1 : undefined;
-  const mediaKey = `${type}:${tmdbId}`;
+  const numId = Number(tmdbId) || Number(anilistId) || 0;
+  const effectiveId = anime ? (anilistId || tmdbId || 0) : (tmdbId || 0);
+  const mediaKey = anime ? `anime:${effectiveId}` : `${type}:${effectiveId}`;
   const resumeKey = `${mediaKey}:${curSeason ?? 0}:${curEpisode ?? 0}`;
   const resumeKeyRef = useRef(resumeKey);
   resumeKeyRef.current = resumeKey;
   const typeRef = useRef(type);
   typeRef.current = type;
-  const tmdbIdRef = useRef(tmdbId);
-  tmdbIdRef.current = tmdbId;
+  const tmdbIdRef = useRef<number>(numId);
+  tmdbIdRef.current = numId;
   const curSeasonRef = useRef(curSeason);
   curSeasonRef.current = curSeason;
   const curEpisodeRef = useRef(curEpisode);
@@ -389,6 +400,22 @@ export function VidPlayer({
   const [showControls, setShowControls] = useState(true);
   const showControlsRef = useRef(true);
   showControlsRef.current = showControls;
+
+  // A 16:9 embed on a phone is only ~160px tall, and a small iframe can be
+  // narrower than 360px. Measure the real box so the chrome can slim down
+  // instead of covering the picture or spilling out of the frame.
+  const [compactChrome, setCompactChrome] = useState(false);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height ?? node.clientHeight;
+      setCompactChrome(height > 0 && height < 320);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   /* ------------------------------- quality -------------------------------- */
   const [levels, setLevels] = useState<{ index: number; label: string; height: number; url?: string }[]>([]);
@@ -737,6 +764,9 @@ export function VidPlayer({
       season: curSeason,
       episode: curEpisode,
       lang: defaultLangRef.current,
+      anime,
+      anilistId,
+      malId,
     });
     if (token !== loadTokenRef.current) return;
 
@@ -758,7 +788,7 @@ export function VidPlayer({
     setSelectedIndex(best);
     setSwitching(false);
     playWhenReadyRef.current = autoPlayRef.current;
-  }, [type, tmdbId, curSeason, curEpisode]);
+  }, [type, tmdbId, curSeason, curEpisode, anime, anilistId, malId]);
 
   useEffect(() => {
     void loadStreams();
@@ -770,6 +800,7 @@ export function VidPlayer({
   /* ----------------------------- skip segments ---------------------------- */
   useEffect(() => {
     let active = true;
+    if (!tmdbId) return;
     fetchSegments({ tmdbId, season: curSeason, episode: curEpisode }).then((data) => {
       if (active) setSegmentsData(data);
     });
@@ -777,6 +808,31 @@ export function VidPlayer({
       active = false;
     };
   }, [tmdbId, curSeason, curEpisode]);
+
+  // If stream provides intro / outro timestamps (e.g. anime via MegaPlay), wire directly into skip segments
+  useEffect(() => {
+    if (currentStream?.intro && currentStream.intro.end > currentStream.intro.start) {
+      setSegmentsData((prev) => ({
+        ...prev,
+        intro: [
+          {
+            start_ms: currentStream.intro!.start * 1000,
+            end_ms: currentStream.intro!.end * 1000,
+          },
+        ],
+        ...(currentStream.outro && currentStream.outro.end > currentStream.outro.start
+          ? {
+              credits: [
+                {
+                  start_ms: currentStream.outro.start * 1000,
+                  end_ms: currentStream.outro.end * 1000,
+                },
+              ],
+            }
+          : {}),
+      }));
+    }
+  }, [currentStream]);
 
   /* ------------------------------- the engine ----------------------------- */
   useEffect(() => {
@@ -803,6 +859,9 @@ export function VidPlayer({
       /* ignore */
     }
     disableNativeSubtitleTracks(video);
+    // The buffered bar is painted imperatively; clear the previous server's
+    // range so a switch never shows stale buffer.
+    if (bufferedBarRef.current) bufferedBarRef.current.style.width = "0%";
     video.removeAttribute("src");
     try {
       video.load();
@@ -1676,7 +1735,7 @@ export function VidPlayer({
 
   useEffect(() => {
     if (!episodesOpen) return;
-    setEpisodeProgress(readEpisodeProgress(type, tmdbId));
+    setEpisodeProgress(readEpisodeProgress(type, tmdbId || 0));
   }, [episodesOpen, tmdbId, type]);
 
   // Let the host page follow the viewer into the next episode.
@@ -1886,13 +1945,19 @@ export function VidPlayer({
     const q = subQuery.trim().toLowerCase();
     return allSubTracks.filter((track) => {
       if (track.lang === "local") return true;
-      if (subLang && track.lang && normLang(track.lang) !== normLang(subLang)) {
-        return false;
+      // Stream-provided subtitles and embedded tracks belong to the current video.
+      // Keep them visible so users can immediately choose Arabic, French, Spanish, etc.
+      // External searched tracks (from OpenSubtitles) are filtered by the selected search language.
+      if (!track.isStreamSub && track.hlsIndex === undefined) {
+        if (subLang && subLang !== "all" && track.lang && normLang(track.lang) !== normLang(subLang)) {
+          return false;
+        }
       }
       if (!q) return true;
       return (
         track.label.toLowerCase().includes(q) ||
-        (track.langName || "").toLowerCase().includes(q)
+        (track.langName || "").toLowerCase().includes(q) ||
+        (track.lang || "").toLowerCase().includes(q)
       );
     });
   }, [allSubTracks, subLang, subQuery]);
@@ -2056,7 +2121,7 @@ export function VidPlayer({
 
   const searchSubs = useCallback(
     async (lang: string, autoPick = false) => {
-      const lang3 = normLang(lang || "en");
+      const lang3 = (!lang || lang === "all") ? "eng" : normLang(lang);
       const key = `${lang3}|${type}|${tmdbId}|${curSeason ?? 0}|${curEpisode ?? 0}`;
       if (!autoPick && searchedKeyRef.current === key) return;
 
@@ -2299,6 +2364,43 @@ export function VidPlayer({
     return serverGroups.find((group) => group.id === key) || null;
   }, [currentStream, serverGroups]);
 
+  /**
+   * Box publishes one MP4 per audio language and marks the title's own audio
+   * `vo`. The audio menu should read like a language picker: original first,
+   * then the rest alphabetically, and one row per language — the best quality
+   * stream of that language is kept, other resolutions stay in the quality menu.
+   */
+  const audioVariantList = useMemo(() => {
+    const members = currentServerGroup?.members ?? [];
+    if (members.length <= 1) return [];
+    const seen = new Set<string>();
+    const unique = members.filter((member) => {
+      const key = (
+        member.item.lang ||
+        member.item.langLabel ||
+        member.item.id
+      ).toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const isOriginal = (member: { item: StreamItem }) =>
+      member.item.version === "vo" ||
+      member.item.version === "sub" ||
+      member.item.lang === "vo" ||
+      member.item.lang === "ja" ||
+      member.item.lang === "jpn" ||
+      /original/i.test(member.item.langLabel || "") ||
+      /japanese/i.test(member.item.langLabel || "");
+    return unique.sort((a, b) => {
+      const diff = Number(isOriginal(b)) - Number(isOriginal(a));
+      if (diff !== 0) return diff;
+      return (a.item.langLabel || a.item.label || "").localeCompare(
+        b.item.langLabel || b.item.label || ""
+      );
+    });
+  }, [currentServerGroup]);
+
   // hls.js tracks win once available; the m3u8 renditions supply names and
   // language codes both before the manifest attaches and afterwards.
   const audioOptions = useMemo(() => {
@@ -2438,7 +2540,7 @@ export function VidPlayer({
       )}
 
       {/* Pause screen: title, time left and the clock time it ends */}
-      {!isPlaying && !isBuffering && !blockingError && pausedAt > 0 && (
+      {!isPlaying && !isBuffering && !blockingError && pausedAt > 0 && !compactChrome && (
         <div className="pointer-events-none absolute inset-x-0 top-[calc(50%+2.5rem)] sm:top-[calc(50%+3.75rem)] z-20 px-4 sm:px-6 text-center">
           <p className="truncate text-xs sm:text-sm font-semibold text-white drop-shadow">
             {title}
@@ -2599,7 +2701,7 @@ export function VidPlayer({
           type="button"
           onClick={togglePlay}
           aria-label="Play video"
-          className="absolute z-20 flex h-14 w-14 sm:h-20 sm:w-20 items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-105"
+          className={`absolute z-20 flex items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-105 ${compactChrome ? "h-10 w-10" : "h-14 w-14"} sm:h-20 sm:w-20`}
           style={{ backgroundColor: accentColor }}
         >
           <Play className="ml-0.5 sm:ml-1 h-6 w-6 fill-current sm:h-9 sm:w-9" />
@@ -2608,14 +2710,14 @@ export function VidPlayer({
 
       {/* Top bar */}
       <div
-        className={`absolute inset-x-0 top-0 z-40 bg-gradient-to-b from-black/85 via-black/40 to-transparent px-3 pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] transition-opacity duration-300 sm:px-5 sm:pb-5 sm:pt-5 ${showControls ? "opacity-100" : "pointer-events-none opacity-0"
+        className={`absolute inset-x-0 top-0 z-40 bg-gradient-to-b from-black/85 via-black/40 to-transparent px-3 transition-opacity duration-300 sm:px-5 sm:pb-5 sm:pt-5 ${compactChrome ? "pb-2 pt-2" : "pb-4 pt-[max(0.75rem,env(safe-area-inset-top))]"} ${showControls ? "opacity-100" : "pointer-events-none opacity-0"
           }`}
       >
         <div className="min-w-0">
           <h1 className="truncate text-xs font-semibold text-white drop-shadow sm:text-base">
             {title}
           </h1>
-          <div className="mt-1 flex flex-wrap items-center gap-1 text-[9.5px] font-medium sm:mt-1.5 sm:gap-1.5 sm:text-[10.5px]">
+          <div className={`mt-1 flex-wrap items-center gap-1 text-[9.5px] font-medium sm:mt-1.5 sm:gap-1.5 sm:text-[10.5px] ${compactChrome ? "hidden" : "flex"}`}>
             {type === "tv" && curSeason && curEpisode && (
               <span
                 className="rounded px-1.5 py-0.5"
@@ -2695,15 +2797,15 @@ export function VidPlayer({
 
       {/* ---------------- Bottom controls ---------------- */}
       <div
-        className={`absolute inset-x-0 bottom-0 z-40 transition-opacity duration-300 ${showControls ? "opacity-100" : "pointer-events-none opacity-0"
+        className={`pointer-events-none absolute inset-x-0 bottom-0 z-40 transition-opacity duration-300 ${showControls ? "opacity-100" : "opacity-0"
           }`}
       >
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 sm:h-44 bg-gradient-to-t from-black via-black/80 to-transparent" />
+        <div className={`pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/80 to-transparent ${compactChrome ? "h-24" : "h-36"} sm:h-44`} />
 
-        <div className="relative px-2.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] pt-8 sm:px-5 sm:pb-4 sm:pt-10">
+        <div className={`pointer-events-none relative w-full px-2.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] sm:px-5 sm:pb-4 sm:pt-10 ${compactChrome ? "pt-4" : "pt-8"}`}>
           {/* Seek bar */}
           <div
-            className="group/seek relative mb-1.5 flex h-7 sm:h-6 w-full cursor-pointer touch-none items-center py-2"
+            className={`group/seek relative mb-1.5 flex h-7 sm:h-6 w-full cursor-pointer touch-none items-center py-2 ${showControls ? "pointer-events-auto" : "pointer-events-none"}`}
             onPointerDown={(event) => {
               const target = event.currentTarget;
               target.setPointerCapture?.(event.pointerId);
@@ -2811,7 +2913,7 @@ export function VidPlayer({
           </div>
 
           {/* Control row */}
-          <div className="flex items-center justify-between gap-1.5 sm:gap-2">
+          <div className={`flex items-center justify-between gap-1.5 sm:gap-2 ${showControls ? "pointer-events-auto" : "pointer-events-none"}`}>
             <div className="flex min-w-0 items-center gap-0.5 sm:gap-1">
               <button
                 type="button"
@@ -2875,8 +2977,10 @@ export function VidPlayer({
                 <span ref={timeCurrentTextRef} className="text-white/90">
                   0:00
                 </span>
-                <span className="mx-0.5 sm:mx-1 text-white/25">/</span>
-                <span ref={timeDurationTextRef}>{formatTime(duration)}</span>
+                <span className="mx-0.5 hidden text-white/25 min-[380px]:inline sm:mx-1">/</span>
+                <span ref={timeDurationTextRef} className="hidden min-[380px]:inline">
+                  {formatTime(duration)}
+                </span>
               </div>
             </div>
 
@@ -2982,8 +3086,11 @@ export function VidPlayer({
                           <MenuLabel className={audioOptions.length > 0 ? "mt-3 border-t border-white/10 pt-2" : ""}>
                             {audioOptions.length > 0 ? "Stream variants" : `Languages on ${currentStream?.name || "this server"}`}
                           </MenuLabel>
-                          {currentServerGroup.members.map((member) => {
-                            const active = member.index === selectedIndex;
+                          {audioVariantList.map((member) => {
+                            const active =
+                              member.index === selectedIndex ||
+                              (Boolean(member.item.lang) &&
+                                member.item.lang === currentStream?.lang);
                             return (
                               <button
                                 key={member.item.id}
@@ -3116,15 +3223,16 @@ export function VidPlayer({
                               value={subLang}
                               onChange={(event) => {
                                 const next = event.target.value;
-                                if (!next) return;
                                 setSubLang(next);
                                 writeSubLang(next);
-                                void searchSubs(next, true);
+                                if (next && next !== "all") {
+                                  void searchSubs(next, true);
+                                }
                               }}
                               style={{ colorScheme: "dark" }}
                               className="h-8 w-full rounded-lg border border-white/10 bg-white/[0.07] px-2 text-[11.5px] text-white outline-none focus:border-[var(--accent)] [&>option]:bg-[#1b1b1f]"
                             >
-                              <option value="">Choose…</option>
+                              <option value="all">All Languages</option>
                               {LANGS.map(([code, english, native]) => (
                                 <option key={code} value={code}>
                                   {native && native !== english ? `${english} — ${native}` : english}
@@ -3210,7 +3318,7 @@ export function VidPlayer({
 
                           {!filteredSubTracks.length && !subSearching && !loadingSubs && (
                             <p className="px-2.5 py-5 text-center text-[11.5px] leading-relaxed text-white/45">
-                              {subLang
+                              {subLang && subLang !== "all"
                                 ? `No subtitles in ${langLabel(subLang).english} yet. Try another language or upload a file below.`
                                 : "No tracks yet. Choose a language, or upload a file below."}
                             </p>
@@ -3818,6 +3926,16 @@ function ServerRow({
             <span className="truncate text-[12.5px] font-semibold text-white">
               {item.name}
             </span>
+            {item.version === "sub" && (
+              <span className="rounded bg-sky-500/15 border border-sky-500/30 px-1.5 py-px text-[9px] font-bold uppercase tracking-wider text-sky-400">
+                Sub
+              </span>
+            )}
+            {item.version === "dub" && (
+              <span className="rounded bg-amber-500/15 border border-amber-500/30 px-1.5 py-px text-[9px] font-bold uppercase tracking-wider text-amber-400">
+                Dub
+              </span>
+            )}
             {selected && (
               <Check className="h-3.5 w-3.5 shrink-0" style={{ color: accentColor }} />
             )}

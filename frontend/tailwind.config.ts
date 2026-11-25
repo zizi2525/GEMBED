@@ -22,7 +22,7 @@ const config: Config = {
         house: "#141210",
         bone: "#F2EDE3",
         muted: "#9A948A",
-        curtain: "#E0453A",
+        accent: "#3B82F6",
         film: "#E7AE4F",
         brand: {
           pink: "#f59ff1",

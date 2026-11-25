@@ -6,6 +6,7 @@ import { PLAYER_NAME, PROMO_TEXT } from "@/lib/config";
 import {
   parseStartTime,
   resolveAccentColor,
+  resolveAnime,
   resolveAutoNext,
   resolveAutoplay,
   resolveShowEpisodes,
@@ -45,12 +46,18 @@ export default async function TvPlayerPage({
   const tmdb = await fetchTmdbDetails("tv", tmdbId);
   if (!tmdb) notFound();
 
-  const accentColor = resolveAccentColor(sp) || "#6366f1";
+  const accentColor = resolveAccentColor(sp) || "#3b82f6";
   const autoPlay = resolveAutoplay(sp);
   const startAt = parseStartTime(sp);
   const defaultLang = sp.lang || "en";
   const autoNext = resolveAutoNext(sp);
   const showEpisodes = resolveShowEpisodes(sp);
+  const isAnime =
+    resolveAnime(sp) ||
+    (tmdb.originalLanguage === "ja" &&
+      (tmdb.genres?.some((g) => g.id === 16 || g.name.toLowerCase().includes("anim")) ?? false));
+  const anilistId = sp.anilistId || sp.anilist;
+  const malId = sp.malId || sp.mal;
 
   const buildHref = (nextS: number, nextE: number) => {
     const q = new URLSearchParams({
@@ -60,6 +67,9 @@ export default async function TvPlayerPage({
       autonext: autoNext ? "1" : "0",
       episodes: showEpisodes ? "1" : "0",
     });
+    if (isAnime) q.set("anime", "1");
+    if (anilistId) q.set("anilistId", anilistId);
+    if (malId) q.set("malId", malId);
     return `/tv/${tmdbId}/${nextS}/${nextE}?${q.toString()}`;
   };
 
@@ -85,13 +95,17 @@ export default async function TvPlayerPage({
       : null;
 
   // The episode browser navigates to sibling URLs and keeps the embed options.
-  const episodesQuery = `?${new URLSearchParams({
+  const episodeParams = new URLSearchParams({
     accent: accentColor,
     autoplay: autoPlay ? "1" : "0",
     lang: defaultLang,
     autonext: autoNext ? "1" : "0",
     episodes: showEpisodes ? "1" : "0",
-  }).toString()}`;
+  });
+  if (isAnime) episodeParams.set("anime", "1");
+  if (anilistId) episodeParams.set("anilistId", anilistId);
+  if (malId) episodeParams.set("malId", malId);
+  const episodesQuery = `?${episodeParams.toString()}`;
 
   const seasons = (tmdb.seasons || [])
     .filter((item: { season_number: number }) => item.season_number >= 1)
@@ -102,9 +116,12 @@ export default async function TvPlayerPage({
     }));
 
   return (
-    <main className="h-screen w-screen overflow-hidden bg-black">
+    <main className="h-[100dvh] w-full overflow-hidden bg-black">
       <VidPlayer
         type="tv"
+        anime={isAnime}
+        anilistId={anilistId}
+        malId={malId}
         tmdbId={tmdbId}
         imdbId={tmdb.imdbId}
         season={s}

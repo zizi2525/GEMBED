@@ -6,6 +6,7 @@ import { PLAYER_NAME, PROMO_TEXT } from "@/lib/config";
 import {
   parseStartTime,
   resolveAccentColor,
+  resolveAnime,
   resolveAutoplay,
 } from "@/lib/route-params";
 
@@ -50,15 +51,24 @@ export default async function MovieEmbedPage({
   const tmdb = await fetchTmdbDetails("movie", tmdbId);
   if (!tmdb) notFound();
 
-  const accentColor = resolveAccentColor(sp) || "#6366f1";
+  const accentColor = resolveAccentColor(sp) || "#3b82f6";
   const autoPlay = resolveAutoplay(sp);
   const startAt = parseStartTime(sp);
   const defaultLang = sp.lang || "en";
+  const isAnime =
+    resolveAnime(sp) ||
+    (tmdb.originalLanguage === "ja" &&
+      (tmdb.genres?.some((g) => g.id === 16 || g.name.toLowerCase().includes("anim")) ?? false));
+  const anilistId = sp.anilistId || sp.anilist;
+  const malId = sp.malId || sp.mal;
 
   return (
-    <main className="h-screen w-screen overflow-hidden bg-black">
+    <main className="h-[100dvh] w-full overflow-hidden bg-black">
       <VidPlayer
         type="movie"
+        anime={isAnime}
+        anilistId={anilistId}
+        malId={malId}
         tmdbId={tmdbId}
         imdbId={tmdb.imdbId}
         title={tmdb.title}

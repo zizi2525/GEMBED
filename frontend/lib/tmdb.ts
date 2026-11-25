@@ -1,5 +1,11 @@
 // TMDB helper. The key stays on the server; it is never exposed to the browser.
-const TMDB_KEY = process.env.TMDB_API_KEY || "";
+function getTmdbKey(): string {
+  return (
+    process.env.TMDB_API_KEY ||
+    process.env.NEXT_PUBLIC_TMDB_API_KEY ||
+    "f5b2cdde0b678e87f5c68b61b43c688c"
+  );
+}
 
 const BASE = "https://api.themoviedb.org/3";
 
@@ -35,6 +41,8 @@ export interface TmdbDetails {
   overview: string;
   rating: number;
   runtime: number | null;
+  genres?: Array<{ id: number; name: string }>;
+  originalLanguage?: string;
   seasons?: Array<{
     id: number;
     season_number: number;
@@ -84,6 +92,10 @@ export async function fetchTmdbDetails(
         data.runtime ??
         (Array.isArray(data.episode_run_time) ? data.episode_run_time[0] : null) ??
         null,
+      genres: Array.isArray(data.genres)
+        ? data.genres.map((g: any) => ({ id: g.id, name: g.name }))
+        : undefined,
+      originalLanguage: data.original_language || undefined,
       seasons: Array.isArray(data.seasons)
         ? data.seasons.map((s: any) => ({
             id: s.id,
@@ -120,9 +132,10 @@ export async function getLogo(
 }
 
 async function tmdb(path: string, params: Record<string, string> = {}) {
-  if (!TMDB_KEY) throw new Error("TMDB_API_KEY is not configured");
+  const key = getTmdbKey();
+  if (!key) throw new Error("TMDB_API_KEY is not configured");
   const url = new URL(BASE + path);
-  url.searchParams.set("api_key", TMDB_KEY);
+  url.searchParams.set("api_key", key);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url.toString(), { next: { revalidate: 3600 } });
   if (!res.ok) throw new Error(`TMDB ${res.status}`);
@@ -131,6 +144,15 @@ async function tmdb(path: string, params: Record<string, string> = {}) {
 
 export async function getPopular(type: "movie" | "tv"): Promise<TmdbItem[]> {
   const data = await tmdb(`/${type}/popular`);
+  return (data.results || []).map(normalize);
+}
+
+export async function getPopularAnime(): Promise<TmdbItem[]> {
+  const data = await tmdb(`/discover/tv`, {
+    with_genres: "16",
+    with_original_language: "ja",
+    sort_by: "popularity.desc",
+  });
   return (data.results || []).map(normalize);
 }
 
@@ -207,6 +229,24 @@ export async function getSeasonEpisodes(
  * Accepts a TMDB number or an IMDb id (`tt…`) and returns the TMDB id, so
  * `/movie/tt1375666` works the same as `/movie/27205`.
  */
+export async function resolveTmdbFromAniList(
+  anilistId: string | number
+): Promise<number | null> {
+  if (!anilistId) return null;
+  try {
+    const res = await fetch(
+      `https://api.ani.zip/mappings?anilist_id=${encodeURIComponent(String(anilistId))}`,
+      { next: { revalidate: 86400 } }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const mapped = data?.mappings?.themoviedb_id;
+    return mapped ? Number(mapped) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function resolveTmdbId(
   type: "movie" | "tv",
   raw: string
@@ -307,6 +347,45 @@ export async function discover(
   }
 
   const data = await tmdb(`/discover/${type}`, params);
+  const items = (data.results || []).map(normalize);
+  return {
+    page,
+    total_pages: data.total_pages || 1,
+    total_results: data.total_results || items.length,
+    results: items.slice(0, perPage),
+  };
+}
+
+export async function discoverAnime(
+  q: DiscoverQuery
+): Promise<{ page: number; total_pages: number; total_results: number; results: TmdbItem[] }> {
+  const page = Math.max(1, Number(q.page) || 1);
+  const perPage = Math.min(100, Math.max(1, Number(q.resultsPerPage) || 20));
+
+  if (q.query && q.query.trim().length >= 3) {
+    const data = await tmdb(`/search/tv`, { query: q.query.trim(), page: String(page) });
+    const items = (data.results || []).map(normalize);
+    return {
+      page,
+      total_pages: data.total_pages || 1,
+      total_results: data.total_results || items.length,
+      results: items.slice(0, perPage),
+    };
+  }
+
+  const field = TV_ORDER[q.ordering || "views"] || "popularity";
+  const direction = q.direction === "asc" ? "asc" : "desc";
+  const params: Record<string, string> = {
+    page: String(page),
+    sort_by: `${field}.${direction}`,
+    with_genres: "16",
+    with_original_language: "ja",
+  };
+  if (q.year) {
+    params["first_air_date_year"] = q.year;
+  }
+
+  const data = await tmdb(`/discover/tv`, params);
   const items = (data.results || []).map(normalize);
   return {
     page,

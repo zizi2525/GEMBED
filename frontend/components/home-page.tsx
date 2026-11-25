@@ -22,6 +22,7 @@ import {
   Gauge,
   MonitorPlay,
   CircleSlash2,
+  Sparkles,
 } from "lucide-react";
 import { LANGS } from "@/lib/subtitles";
 import type { TmdbItem } from "@/lib/tmdb";
@@ -32,14 +33,17 @@ import type { TmdbItem } from "@/lib/tmdb";
 
 const PRESETS = [
   { title: "Dune: Part Two", type: "movie" as const, tmdbId: 693134, tag: "Film" },
-  { title: "Interstellar", type: "movie" as const, tmdbId: 157336, tag: "Film" },
+  { title: "Demon Slayer", type: "anime" as const, tmdbId: 0, anilistId: 101922, season: 1, episode: 1, tag: "Anime" },
+  { title: "Attack on Titan", type: "anime" as const, tmdbId: 0, anilistId: 16498, season: 1, episode: 1, tag: "Anime" },
+  { title: "Jujutsu Kaisen", type: "anime" as const, tmdbId: 0, anilistId: 113415, season: 1, episode: 1, tag: "Anime" },
+  { title: "Solo Leveling", type: "anime" as const, tmdbId: 0, anilistId: 151807, season: 1, episode: 1, tag: "Anime" },
   { title: "Breaking Bad", type: "tv" as const, tmdbId: 1396, season: 1, episode: 1, tag: "Series" },
-  { title: "Demon Slayer", type: "tv" as const, tmdbId: 85937, season: 1, episode: 1, tag: "Anime" },
-  { title: "Inception", type: "movie" as const, tmdbId: 27205, tag: "Film" },
+  { title: "Your Name", type: "anime" as const, tmdbId: 0, anilistId: 21519, season: 1, episode: 1, tag: "Anime" },
+  { title: "Interstellar", type: "movie" as const, tmdbId: 157336, tag: "Film" },
 ];
 
 const ACCENTS = [
-  { name: "Curtain", hex: "#E0453A" },
+  { name: "Brand blue", hex: "#3B82F6" },
   { name: "Amber", hex: "#E7AE4F" },
   { name: "Emerald", hex: "#3FB68B" },
   { name: "Indigo", hex: "#6366F1" },
@@ -48,6 +52,7 @@ const ACCENTS = [
 
 const AUDIO_LANGUAGES = [
   { code: "en", label: "English" },
+  { code: "ja", label: "Japanese (Sub)" },
   { code: "fr", label: "French" },
   { code: "ar", label: "Arabic" },
   { code: "de", label: "German" },
@@ -131,9 +136,10 @@ const STEPS = [
   {
     n: "01",
     title: "Pick the route",
-    body: "Movies take a TMDB id. Series add the season and episode.",
+    body: "Movies & Series take a TMDB id. Anime uses an AniList id and episode.",
     code: `/embed/movie/{tmdbId}
-/embed/tv/{tmdbId}/{season}/{episode}`,
+/embed/tv/{tmdbId}/{season}/{episode}
+/embed/anime/{anilistId}/{episode}`,
   },
   {
     n: "02",
@@ -147,7 +153,7 @@ const STEPS = [
     n: "03",
     title: "Tune the flags",
     body: "Accent, autoplay and preferred audio are optional query parameters.",
-    code: `?accent=%23E0453A
+    code: `?accent=%233B82F6
 &autoplay=1&lang=en`,
   },
 ];
@@ -249,13 +255,13 @@ function useReveal() {
     const mutations =
       typeof MutationObserver !== "undefined"
         ? new MutationObserver((records) => {
-            records.forEach((record) => {
-              record.addedNodes.forEach((node) => {
-                if (node.nodeType === 1) collect(node as unknown as HTMLElement);
-              });
+          records.forEach((record) => {
+            record.addedNodes.forEach((node) => {
+              if (node.nodeType === 1) collect(node as unknown as HTMLElement);
             });
-            onScroll();
-          })
+          });
+          onScroll();
+        })
         : null;
     mutations?.observe(document.body, { childList: true, subtree: true });
 
@@ -319,8 +325,10 @@ export function HomePage({ brand }: { brand: Brand }) {
   const [origin, setOrigin] = useState("");
 
   /* ------------------------------ preview ------------------------------- */
-  const [mediaType, setMediaType] = useState<"movie" | "tv">("movie");
+  const [mediaType, setMediaType] = useState<"movie" | "tv" | "anime">("movie");
+  const [isAnime, setIsAnime] = useState(false);
   const [tmdbId, setTmdbId] = useState(693134);
+  const [anilistId, setAnilistId] = useState<string>("");
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
   // The homepage preview starts paused: it is a demo, not something that should
@@ -337,24 +345,27 @@ export function HomePage({ brand }: { brand: Brand }) {
   useEffect(() => setOrigin(window.location.origin), []);
 
   const previewPath = useMemo(() => {
+    const isAnimeActive = mediaType === "anime" || isAnime;
     const path =
       mediaType === "movie"
         ? `/embed/movie/${tmdbId}`
-        : `/embed/tv/${tmdbId}/${season}/${episode}`;
+        : isAnimeActive
+          ? `/embed/anime/${anilistId || tmdbId}/${episode}`
+          : `/embed/tv/${tmdbId}/${season}/${episode}`;
     const params = new URLSearchParams();
     params.set("accent", accent);
     if (!autoplay) params.set("autoplay", "0");
     if (audioLang !== "en") params.set("lang", audioLang);
     return `${path}?${params.toString()}`;
-  }, [accent, audioLang, autoplay, episode, mediaType, season, tmdbId]);
+  }, [accent, anilistId, audioLang, autoplay, episode, isAnime, mediaType, season, tmdbId]);
 
   const [livePath, setLivePath] = useState(previewPath);
   useEffect(() => {
     // An empty / incomplete id would point the preview at a dead route.
-    if (!tmdbId) return;
+    if (mediaType === "anime" ? !anilistId && !tmdbId : !tmdbId) return;
     const timer = setTimeout(() => setLivePath(previewPath), 450);
     return () => clearTimeout(timer);
-  }, [previewPath, tmdbId]);
+  }, [anilistId, mediaType, previewPath, tmdbId]);
 
   /* ------------------------------- search ------------------------------- */
   const [query, setQuery] = useState("");
@@ -405,8 +416,14 @@ export function HomePage({ brand }: { brand: Brand }) {
   }, [searchOpen]);
 
   const selectItem = useCallback(
-    (item: { id: number; title: string; poster?: string | null; year?: string; rating?: number }) => {
-      setTmdbId(item.id);
+    (item: { id: number; title: string; poster?: string | null; year?: string; rating?: number }, targetType?: "movie" | "tv" | "anime") => {
+      const effectiveType = targetType ?? mediaType;
+      if (effectiveType === "anime") {
+        setAnilistId(String(item.id));
+        setTmdbId(0);
+      } else {
+        setTmdbId(item.id);
+      }
       setCurrentTitle(item.title);
       setCurrentPoster(item.poster ?? null);
       setCurrentYear(item.year);
@@ -414,15 +431,20 @@ export function HomePage({ brand }: { brand: Brand }) {
       setQuery(item.title);
       setSearchOpen(false);
     },
-    []
+    [mediaType]
   );
 
   const applyPreset = (preset: (typeof PRESETS)[number]) => {
     setMediaType(preset.type);
+    setIsAnime(preset.tag === "Anime" || preset.type === "anime");
     setTmdbId(preset.tmdbId);
+    setAnilistId(preset.anilistId ? String(preset.anilistId) : "");
     setSeason(preset.season ?? 1);
     setEpisode(preset.episode ?? 1);
     setCurrentTitle(preset.title);
+    if (preset.tag === "Anime" || preset.type === "anime") {
+      setTrendType("anime");
+    }
     setCurrentPoster(null);
     setCurrentYear(undefined);
     setCurrentRating(undefined);
@@ -433,15 +455,19 @@ export function HomePage({ brand }: { brand: Brand }) {
   // A TMDB id belongs to one media type, so keeping it across a switch would
   // point the preview at the wrong route (a movie id opened as a series).
   // Switch to that type's default title instead.
-  const switchType = (next: "movie" | "tv") => {
+  const switchType = (next: "movie" | "tv" | "anime") => {
     if (next === mediaType) return;
+    setIsAnime(next === "anime");
     const preset = PRESETS.find((item) => item.type === next);
     setMediaType(next);
     if (preset) {
       setTmdbId(preset.tmdbId);
+      setAnilistId(preset.anilistId ? String(preset.anilistId) : "");
       setCurrentTitle(preset.title);
       setSeason(preset.season ?? 1);
       setEpisode(preset.episode ?? 1);
+    } else {
+      setAnilistId("");
     }
     setCurrentPoster(null);
     setCurrentYear(undefined);
@@ -503,7 +529,7 @@ export function HomePage({ brand }: { brand: Brand }) {
   };
 
   /* ---------------------------- poster data ----------------------------- */
-  const [trendType, setTrendType] = useState<"movie" | "tv">("movie");
+  const [trendType, setTrendType] = useState<"movie" | "tv" | "anime">("movie");
   const [trendItems, setTrendItems] = useState<TmdbItem[]>([]);
   const [trendLoading, setTrendLoading] = useState(true);
   const trendCache = useRef<Record<string, TmdbItem[]>>({});
@@ -534,15 +560,23 @@ export function HomePage({ brand }: { brand: Brand }) {
   }, [trendType]);
 
   const pickTrending = (item: TmdbItem) => {
-    selectItem({
-      id: item.id,
-      title: item.title,
-      poster: item.poster,
-      year: item.year,
-      rating: item.rating,
-    });
-    setMediaType(trendType);
-    if (trendType === "tv") {
+    const targetType = trendType === "anime" ? "anime" : trendType;
+    setMediaType(targetType);
+    setIsAnime(trendType === "anime");
+    if (trendType !== "anime") {
+      setAnilistId("");
+    }
+    selectItem(
+      {
+        id: item.id,
+        title: item.title,
+        poster: item.poster,
+        year: item.year,
+        rating: item.rating,
+      },
+      targetType
+    );
+    if (targetType === "tv" || targetType === "anime") {
       setSeason(1);
       setEpisode(1);
     }
@@ -605,13 +639,13 @@ export function HomePage({ brand }: { brand: Brand }) {
 
   /* ------------------------------- render ------------------------------- */
   return (
-    <div className="relative z-10 min-h-screen text-bone">
+    <div className="relative z-10 min-h-[100dvh] text-bone">
       {/* ------------------------------- header ------------------------------ */}
       <header className="sticky top-0 z-40 border-b border-white/[0.07] bg-ink">
-        <div className="mx-auto flex h-16 max-w-[1400px] items-center justify-between gap-6 px-4 sm:px-6 lg:px-8">
+        <div className="mx-auto flex h-16 max-w-[1400px] items-center justify-between gap-3 px-4 sm:gap-6 sm:px-6 lg:px-8">
           <a
             href={brand.url || "/"}
-            className="flex items-center gap-2.5"
+            className="flex min-w-0 items-center gap-2.5"
             aria-label={brand.name}
           >
             <span className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-[10px] bg-bone text-ink">
@@ -626,7 +660,7 @@ export function HomePage({ brand }: { brand: Brand }) {
               <span className="block font-display text-[17px] font-semibold tracking-tight">
                 {brand.name}
               </span>
-              <span className="mt-1 block font-mono text-[9px] uppercase tracking-[0.22em] text-muted">
+              <span className="mt-1 hidden font-mono text-[9px] uppercase tracking-[0.22em] text-muted min-[380px]:block">
                 Embed player
               </span>
             </span>
@@ -657,7 +691,7 @@ export function HomePage({ brand }: { brand: Brand }) {
             href={livePath}
             target="_blank"
             rel="noreferrer"
-            className="group flex items-center gap-1.5 rounded-lg bg-bone px-3.5 py-2 text-[12.5px] font-semibold text-ink transition hover:bg-white"
+            className="group flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-bone px-3 py-2 text-[12.5px] font-semibold text-ink transition hover:bg-white sm:px-3.5"
           >
             Open player
             <ExternalLink className="h-3.5 w-3.5 transition group-hover:translate-x-0.5" />
@@ -667,21 +701,21 @@ export function HomePage({ brand }: { brand: Brand }) {
 
       <main className="mx-auto max-w-[1400px] px-4 pb-20 sm:px-6 lg:px-8">
         {/* -------------------------------- hero ------------------------------- */}
-        <section className="relative pb-10 pt-16 text-center sm:pt-24">
+        <section className="relative pb-8 pt-12 text-center sm:pb-10 sm:pt-24">
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 -z-10 mx-auto h-[380px] max-w-3xl bg-[radial-gradient(ellipse_at_top,_rgba(224,69,58,0.22),_transparent_70%)]"
+            className="pointer-events-none absolute inset-x-0 top-0 -z-10 mx-auto h-[380px] max-w-3xl bg-[radial-gradient(ellipse_at_top,_rgba(59,130,246,0.22),_transparent_70%)]"
           />
 
           <div
             data-reveal
             className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-muted"
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-curtain" />
+            <span className="h-1.5 w-1.5 rounded-full bg-accent" />
             TMDB · multi-server · no keys in the browser
           </div>
 
-          <h1 className="mx-auto mt-6 max-w-4xl font-display text-[2.7rem] font-semibold leading-[0.97] tracking-[-0.035em] sm:text-6xl lg:text-[4.6rem]">
+          <h1 className="mx-auto mt-6 max-w-4xl font-display text-[2.15rem] font-semibold leading-[1.02] tracking-[-0.035em] min-[400px]:text-[2.7rem] min-[400px]:leading-[0.97] sm:text-6xl lg:text-[4.6rem]">
             <span className="block">
               <span className="kinetic-word" style={{ animationDelay: "80ms" }}>
                 Stream&nbsp;
@@ -694,7 +728,7 @@ export function HomePage({ brand }: { brand: Brand }) {
               <span className="kinetic-word" style={{ animationDelay: "230ms" }}>
                 Embed&nbsp;
               </span>
-              <span className="kinetic-word text-curtain" style={{ animationDelay: "300ms" }}>
+              <span className="kinetic-word text-accent" style={{ animationDelay: "300ms" }}>
                 anywhere.
               </span>
             </span>
@@ -716,7 +750,7 @@ export function HomePage({ brand }: { brand: Brand }) {
           >
             <a
               href="#play"
-              className="flex items-center gap-2 rounded-xl bg-curtain px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_40px_-16px_rgba(224,69,58,0.9)] transition hover:brightness-110"
+              className="flex items-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-white shadow-[0_16px_40px_-16px_rgba(59,130,246,0.9)] transition hover:brightness-110"
             >
               <Play className="h-4 w-4 fill-current" />
               Try the player
@@ -750,12 +784,12 @@ export function HomePage({ brand }: { brand: Brand }) {
         <section id="play" className="scroll-mt-24">
           <div
             data-reveal
-                            className="rounded-[26px] border border-white/10 bg-house p-2.5 shadow-[0_40px_120px_-60px_rgba(0,0,0,0.9)] sm:p-4"
+            className="rounded-[26px] border border-white/10 bg-house p-2.5 shadow-[0_40px_120px_-60px_rgba(0,0,0,0.9)] sm:p-4"
           >
             {/* toolbar */}
             <div className="flex flex-col gap-3 px-1 pb-3 pt-1 xl:flex-row xl:items-center">
               <div className="flex items-center gap-2">
-                <div className="grid grid-cols-2 gap-1 rounded-xl border border-white/10 bg-black/35 p-1">
+                <div className="grid grid-cols-3 gap-1 rounded-xl border border-white/10 bg-black/35 p-1">
                   <button
                     type="button"
                     onClick={() => switchType("movie")}
@@ -771,6 +805,14 @@ export function HomePage({ brand }: { brand: Brand }) {
                       }`}
                   >
                     <Tv className="h-3.5 w-3.5" /> Series
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchType("anime")}
+                    className={`flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition ${mediaType === "anime" ? "bg-bone text-ink" : "text-muted hover:text-bone"
+                      }`}
+                  >
+                    <Sparkles className="h-3.5 w-3.5 text-amber-400" /> Anime
                   </button>
                 </div>
 
@@ -806,13 +848,13 @@ export function HomePage({ brand }: { brand: Brand }) {
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   onFocus={() => results.length > 0 && setSearchOpen(true)}
-                  placeholder={`Search a ${mediaType === "movie" ? "movie" : "series"} by title…`}
+                  placeholder={`Search a ${mediaType === "movie" ? "movie" : mediaType === "anime" ? "anime" : "series"} by title…`}
                   autoComplete="off"
                   aria-label="Search TMDB"
-                  className="h-11 w-full rounded-xl border border-white/10 bg-black/35 pl-9 pr-9 text-sm text-bone placeholder:text-muted/60 focus:border-curtain/70 focus:outline-none focus:ring-1 focus:ring-curtain/30"
+                  className="h-11 w-full rounded-xl border border-white/10 bg-black/35 pl-9 pr-9 text-sm text-bone placeholder:text-muted/60 focus:border-accent/70 focus:outline-none focus:ring-1 focus:ring-accent/30"
                 />
                 {searching && (
-                  <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-curtain" />
+                  <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-accent" />
                 )}
 
                 {searchOpen && results.length > 0 && (
@@ -850,62 +892,86 @@ export function HomePage({ brand }: { brand: Brand }) {
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
-                <div>
-                  <label
-                    htmlFor="tmdb-id"
-                    className="mb-1 block font-mono text-[9px] uppercase tracking-[0.14em] text-muted/60"
-                  >
-                    TMDB id
-                  </label>
-                  <input
-                    id="tmdb-id"
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    placeholder="e.g. 27205"
-                    value={tmdbId ? String(tmdbId) : ""}
-                    onChange={(event) =>
-                      setTmdbId(Number(event.target.value.replace(/\D/g, "")) || 0)
-                    }
-                    className="h-9 w-[104px] rounded-lg border border-white/10 bg-black/35 px-2.5 font-mono text-[12px] text-bone placeholder:text-muted/50 focus:border-curtain/70 focus:outline-none"
-                  />
-                </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {mediaType !== "anime" && (
+                  <div>
+                    <label
+                      htmlFor="tmdb-id"
+                      className="mb-1 block font-mono text-[9px] uppercase tracking-[0.14em] text-muted/60"
+                    >
+                      TMDB id
+                    </label>
+                    <input
+                      id="tmdb-id"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="e.g. 693134"
+                      value={tmdbId ? String(tmdbId) : ""}
+                      onChange={(event) =>
+                        setTmdbId(Number(event.target.value.replace(/\D/g, "")) || 0)
+                      }
+                      className="h-9 w-[96px] rounded-lg border border-white/10 bg-black/35 px-2.5 font-mono text-[12px] text-bone placeholder:text-muted/50 focus:border-accent/70 focus:outline-none"
+                    />
+                  </div>
+                )}
+                {(mediaType === "anime" || isAnime) && (
+                  <div>
+                    <label
+                      htmlFor="anilist-id"
+                      className="mb-1 flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.14em] text-amber-400"
+                    >
+                      <Sparkles className="h-2.5 w-2.5 text-amber-400" /> AniList id
+                    </label>
+                    <input
+                      id="anilist-id"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="e.g. 101922"
+                      value={anilistId}
+                      onChange={(event) =>
+                        setAnilistId(event.target.value.replace(/\D/g, ""))
+                      }
+                      className="h-9 w-[96px] rounded-lg border border-amber-500/30 bg-amber-500/[0.04] px-2.5 font-mono text-[12px] text-amber-200 placeholder:text-amber-500/40 focus:border-amber-400 focus:outline-none"
+                    />
+                  </div>
+                )}
                 {mediaType === "tv" && (
-                  <>
-                    <div>
-                      <label
-                        htmlFor="season"
-                        className="mb-1 block font-mono text-[9px] uppercase tracking-[0.14em] text-muted/60"
-                      >
-                        Season
-                      </label>
-                      <input
-                        id="season"
-                        type="number"
-                        min={1}
-                        value={season}
-                        onChange={(event) => setSeason(Math.max(1, Number(event.target.value) || 1))}
-                        className="h-9 w-16 rounded-lg border border-white/10 bg-black/35 px-2.5 font-mono text-[12px] text-bone focus:border-curtain/70 focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label
-                        htmlFor="episode"
-                        className="mb-1 block font-mono text-[9px] uppercase tracking-[0.14em] text-muted/60"
-                      >
-                        Episode
-                      </label>
-                      <input
-                        id="episode"
-                        type="number"
-                        min={1}
-                        value={episode}
-                        onChange={(event) => setEpisode(Math.max(1, Number(event.target.value) || 1))}
-                        className="h-9 w-16 rounded-lg border border-white/10 bg-black/35 px-2.5 font-mono text-[12px] text-bone focus:border-curtain/70 focus:outline-none"
-                      />
-                    </div>
-                  </>
+                  <div>
+                    <label
+                      htmlFor="season"
+                      className="mb-1 block font-mono text-[9px] uppercase tracking-[0.14em] text-muted/60"
+                    >
+                      Season
+                    </label>
+                    <input
+                      id="season"
+                      type="number"
+                      min={1}
+                      value={season}
+                      onChange={(event) => setSeason(Math.max(1, Number(event.target.value) || 1))}
+                      className="h-9 w-16 rounded-lg border border-white/10 bg-black/35 px-2.5 font-mono text-[12px] text-bone focus:border-accent/70 focus:outline-none"
+                    />
+                  </div>
+                )}
+                {(mediaType === "tv" || mediaType === "anime") && (
+                  <div>
+                    <label
+                      htmlFor="episode"
+                      className="mb-1 block font-mono text-[9px] uppercase tracking-[0.14em] text-muted/60"
+                    >
+                      Episode
+                    </label>
+                    <input
+                      id="episode"
+                      type="number"
+                      min={1}
+                      value={episode}
+                      onChange={(event) => setEpisode(Math.max(1, Number(event.target.value) || 1))}
+                      className="h-9 w-16 rounded-lg border border-white/10 bg-black/35 px-2.5 font-mono text-[12px] text-bone focus:border-accent/70 focus:outline-none"
+                    />
+                  </div>
                 )}
               </div>
             </div>
@@ -914,15 +980,15 @@ export function HomePage({ brand }: { brand: Brand }) {
             <div className="overflow-hidden rounded-2xl border border-white/10 bg-black">
               <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] px-3.5 py-2">
                 <div className="flex min-w-0 items-center gap-2.5">
-                  <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.18em] text-curtain">
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-curtain" />
+                  <span className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.18em] text-accent">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
                     Live preview
                   </span>
-                  <span className="truncate font-mono text-[10px] text-muted/50">
+                  <span className="hidden truncate font-mono text-[10px] text-muted/50 min-[420px]:inline">
                     {previewPath.split("?")[0]}
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <button
                     type="button"
                     onClick={() => void copy(embedCode)}
@@ -934,7 +1000,8 @@ export function HomePage({ brand }: { brand: Brand }) {
                       </>
                     ) : (
                       <>
-                        <Copy className="h-3 w-3" /> Copy embed
+                        <Copy className="h-3 w-3" />
+                        <span className="hidden min-[400px]:inline">Copy embed</span>
                       </>
                     )}
                   </button>
@@ -992,7 +1059,7 @@ export function HomePage({ brand }: { brand: Brand }) {
                   <select
                     value={audioLang}
                     onChange={(event) => setAudioLang(event.target.value)}
-                    className="h-8 rounded-lg border border-white/10 bg-black/40 px-2 text-[11.5px] text-bone focus:border-curtain/60 focus:outline-none"
+                    className="h-8 rounded-lg border border-white/10 bg-black/40 px-2 text-[11.5px] text-bone focus:border-accent/60 focus:outline-none"
                     style={{ colorScheme: "dark" }}
                   >
                     {AUDIO_LANGUAGES.map((language) => (
@@ -1009,7 +1076,7 @@ export function HomePage({ brand }: { brand: Brand }) {
                     role="switch"
                     aria-checked={autoplay}
                     onClick={() => setAutoplay((value) => !value)}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${autoplay ? "bg-curtain" : "bg-white/15"
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${autoplay ? "bg-accent" : "bg-white/15"
                       }`}
                   >
                     <span
@@ -1022,9 +1089,9 @@ export function HomePage({ brand }: { brand: Brand }) {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {PRESETS.slice(0, 4).map((preset) => (
+                {PRESETS.map((preset) => (
                   <button
-                    key={preset.tmdbId}
+                    key={preset.title}
                     type="button"
                     onClick={() => applyPreset(preset)}
                     className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] font-medium text-muted transition hover:border-white/20 hover:text-bone"
@@ -1052,7 +1119,7 @@ export function HomePage({ brand }: { brand: Brand }) {
                   </button>
                 ))}
               </div>
-              <span className="font-mono text-[10px] text-muted/50">
+              <span className="hidden font-mono text-[10px] text-muted/50 sm:inline">
                 Responsive 16:9 · fills its container
               </span>
             </div>
@@ -1063,14 +1130,14 @@ export function HomePage({ brand }: { brand: Brand }) {
         </section>
 
         {/* ------------------------------- coverage ---------------------------- */}
-        <section id="coverage" className="scroll-mt-24 pt-20 sm:pt-28">
+        <section id="coverage" className="scroll-mt-24 pt-14 sm:pt-28">
           <div className="grid gap-4 lg:grid-cols-[1.15fr_1fr]">
             <div
               ref={statsRef}
               data-reveal
               className="rounded-3xl border border-white/10 bg-house p-6 sm:p-8"
             >
-              <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-curtain">
+              <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-accent">
                 Coverage
               </span>
               <h2 className="mt-3 font-display text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -1149,7 +1216,7 @@ export function HomePage({ brand }: { brand: Brand }) {
         </section>
 
         {/* ------------------------------- features ---------------------------- */}
-        <section id="features" className="scroll-mt-24 pt-20 sm:pt-28">
+        <section id="features" className="scroll-mt-24 pt-14 sm:pt-28">
           <SectionHead
             eyebrow="Features"
             title="Built for a player you don't have to babysit."
@@ -1164,7 +1231,7 @@ export function HomePage({ brand }: { brand: Brand }) {
                 style={{ transitionDelay: `${(index % 3) * 70}ms` }}
                 className="group rounded-2xl border border-white/10 bg-house p-5 transition duration-300 hover:-translate-y-1 hover:border-white/20"
               >
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-curtain transition group-hover:border-curtain/40 group-hover:bg-curtain/10">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-accent transition group-hover:border-accent/40 group-hover:bg-accent/10">
                   {feature.icon}
                 </span>
                 <h3 className="mt-4 text-[14px] font-semibold text-bone">{feature.title}</h3>
@@ -1175,7 +1242,7 @@ export function HomePage({ brand }: { brand: Brand }) {
         </section>
 
         {/* -------------------------------- steps ------------------------------ */}
-        <section id="how" className="scroll-mt-24 pt-20 sm:pt-28">
+        <section id="how" className="scroll-mt-24 pt-14 sm:pt-28">
           <SectionHead
             eyebrow="How it works"
             title="Three steps, one iframe."
@@ -1191,7 +1258,7 @@ export function HomePage({ brand }: { brand: Brand }) {
                 className="overflow-hidden rounded-2xl border border-white/10 bg-house"
               >
                 <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-4">
-                  <span className="font-mono text-[10px] tracking-[0.18em] text-curtain">{step.n}</span>
+                  <span className="font-mono text-[10px] tracking-[0.18em] text-accent">{step.n}</span>
                   <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted/50">
                     Step
                   </span>
@@ -1209,7 +1276,7 @@ export function HomePage({ brand }: { brand: Brand }) {
         </section>
 
         {/* ------------------------------- events ------------------------------ */}
-        <section id="events" className="scroll-mt-24 pt-20 sm:pt-28">
+        <section id="events" className="scroll-mt-24 pt-14 sm:pt-28">
           <SectionHead
             eyebrow="Player events"
             title="Listen to what the player does."
@@ -1229,7 +1296,7 @@ export function HomePage({ brand }: { brand: Brand }) {
               <ul className="mt-5 space-y-3">
                 {PLAYER_EVENTS.map((item) => (
                   <li key={item.name} className="flex gap-3">
-                    <code className="mt-px shrink-0 rounded-md border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-curtain">
+                    <code className="mt-px shrink-0 rounded-md border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-accent">
                       {item.name}
                     </code>
                     <span className="text-[12px] leading-relaxed text-muted">{item.body}</span>
@@ -1265,7 +1332,7 @@ export function HomePage({ brand }: { brand: Brand }) {
 
             <div data-reveal style={{ transitionDelay: "80ms" }} className="overflow-hidden rounded-2xl border border-white/10 bg-house">
               <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] px-3.5 py-2">
-                <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-curtain">
+                <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-accent">
                   Parent page
                 </span>
                 <button
@@ -1292,7 +1359,7 @@ export function HomePage({ brand }: { brand: Brand }) {
         </section>
 
         {/* ------------------------------ trending ----------------------------- */}
-        <section className="pt-20 sm:pt-28">
+        <section className="pt-14 sm:pt-28">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <SectionHead
               eyebrow="Try something"
@@ -1300,7 +1367,7 @@ export function HomePage({ brand }: { brand: Brand }) {
               description="Pick a poster and it loads straight into the player above."
             />
             <div className="flex rounded-xl border border-white/10 bg-black/30 p-1">
-              {(["movie", "tv"] as const).map((type) => (
+              {(["movie", "tv", "anime"] as const).map((type) => (
                 <button
                   key={type}
                   type="button"
@@ -1308,14 +1375,20 @@ export function HomePage({ brand }: { brand: Brand }) {
                   className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition ${trendType === type ? "bg-bone text-ink" : "text-muted hover:text-bone"
                     }`}
                 >
-                  {type === "movie" ? <Film className="h-3.5 w-3.5" /> : <Tv className="h-3.5 w-3.5" />}
-                  {type === "movie" ? "Movies" : "Series"}
+                  {type === "movie" ? (
+                    <Film className="h-3.5 w-3.5" />
+                  ) : type === "tv" ? (
+                    <Tv className="h-3.5 w-3.5" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                  )}
+                  {type === "movie" ? "Movies" : type === "tv" ? "Series" : "Anime"}
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="mt-7 grid grid-cols-3 gap-2.5 sm:grid-cols-4 lg:grid-cols-6">
+          <div className="mt-7 grid grid-cols-2 gap-2.5 min-[420px]:grid-cols-3 sm:grid-cols-4 lg:grid-cols-6">
             {trendLoading
               ? Array.from({ length: 6 }).map((_, index) => (
                 <div
@@ -1374,7 +1447,7 @@ export function HomePage({ brand }: { brand: Brand }) {
         </section>
 
         {/* --------------------------------- faq ------------------------------- */}
-        <section id="faq" className="scroll-mt-24 pt-20 sm:pt-28">
+        <section id="faq" className="scroll-mt-24 pt-14 sm:pt-28">
           <div className="grid gap-8 lg:grid-cols-[0.8fr_1.2fr]">
             <div data-reveal>
               <SectionHead
@@ -1489,7 +1562,7 @@ function SectionHead({
 }) {
   return (
     <div data-reveal className="max-w-xl">
-      <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-curtain">
+      <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-accent">
         {eyebrow}
       </span>
       <h2 className="mt-3 font-display text-2xl font-semibold tracking-tight text-bone sm:text-3xl">
@@ -1517,7 +1590,7 @@ function Stat({
     <div>
       <p className="font-display text-3xl font-semibold tabular-nums tracking-tight text-bone sm:text-4xl">
         {value}
-        <span className="text-curtain">{suffix}</span>
+        <span className="text-accent">{suffix}</span>
       </p>
       <p className="mt-1.5 text-[12px] font-medium text-bone/80">{label}</p>
       <p className="mt-0.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-muted/60">

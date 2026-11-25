@@ -40,6 +40,9 @@ export interface StreamItem {
   direct?: boolean;
   subtitles?: StreamSubtitle[];
   qualities?: Array<{ quality: string; qualityLabel: string; url: string }>;
+  intro?: { start: number; end: number } | null;
+  outro?: { start: number; end: number } | null;
+  thumbnails?: string | null;
 }
 
 export interface StreamResponse {
@@ -189,6 +192,7 @@ export const SERVER_CODENAMES = [
   "Ari",
   "Nova",
   "Titan",
+  "Mega",
   "Aura",
   "Echo",
   "Atlas",
@@ -351,6 +355,16 @@ function detectLanguage(
   const normLang = lang?.toLowerCase().trim();
   const hay = name || "";
 
+  // Anime Japanese Sub or English Dub (MegaPlay / Anime resolver)
+  if (providerKey === "megaplay" || providerKey === "mega") {
+    if (normVersion === "sub" || normLang === "ja" || normLang === "jpn" || /\b(japanese|sub)\b/i.test(hay)) {
+      return { code: "jpn", label: "Japanese (Sub)" };
+    }
+    if (normVersion === "dub" || normLang === "en" || normLang === "eng" || /\b(english|dub)\b/i.test(hay)) {
+      return { code: "eng", label: "English (Dub)" };
+    }
+  }
+
   // 1. Explicit VOSTFR (Hardsub - Original Audio with French Subtitles)
   if (
     normLang === "vostfr" ||
@@ -360,7 +374,27 @@ function detectLanguage(
     return { code: "vostfr", label: "VOSTFR (French Sub)" };
   }
 
-  // 2. Explicit VF / French Dub
+  // 2. Explicit VO / Original audio indicator. The provider's own language is
+  // kept in the label so an original track reads "Korean (Original)" instead of
+  // a bare "Original (VO)" (Box tags every original language as `vo`).
+  if (
+    normVersion === "vo" ||
+    normVersion === "original" ||
+    normLang === "vo" ||
+    normLang === "original" ||
+    /\b(original|ost|vo)\b/i.test(hay)
+  ) {
+    const concrete =
+      normLang && normLang !== "vo" && normLang !== "original"
+        ? LANG_CODE_MAP[normLang]
+        : undefined;
+    if (concrete) {
+      return { code: concrete.code, label: `${concrete.label} (Original)` };
+    }
+    return { code: "vo", label: "Original (VO)" };
+  }
+
+  // 3. Explicit VF / French Dub
   if (
     normVersion === "vf" ||
     normLang === "fr" ||
@@ -371,7 +405,7 @@ function detectLanguage(
     return { code: "fre", label: "French (VF)" };
   }
 
-  // 3. Multi-audio indicator
+  // 4. Multi-audio indicator
   if (
     normVersion === "multi" ||
     normLang === "mul" ||
@@ -382,16 +416,6 @@ function detectLanguage(
       return { code: "mul", label: "Italian · Original" };
     }
     return { code: "mul", label: "Multi-Audio" };
-  }
-
-  // 4. Explicit VO / Original audio indicator
-  if (
-    normVersion === "vo" ||
-    normLang === "vo" ||
-    normLang === "original" ||
-    /\b(original|ost|vo)\b/i.test(hay)
-  ) {
-    return { code: "vo", label: "Original (VO)" };
   }
 
   // 5. English on multi-language provider (e.g. Vidy Miami 4K is original audio)
@@ -481,6 +505,11 @@ export const CANONICAL_CODENAMES: Record<string, string> = {
   steve: "Steve",
   showbox: "Cloud",
   cloud: "Cloud",
+  megaplay: "MegaPlay",
+  mega: "MegaPlay",
+  vidsrc: "Aura",
+  vidsrcto: "Aura",
+  aura: "Aura",
 };
 
 export function getProviderCanonicalKey(provider: unknown, url: string): string {
@@ -494,6 +523,8 @@ export function getProviderCanonicalKey(provider: unknown, url: string): string 
   if (p.includes("4khdhub") || p === "hub") return "4khdhub";
   if (p.includes("showbox") || p === "cloud") return "showbox";
   if (p.includes("dahmer") || p === "apex") return "dahmer";
+  if (p.includes("megaplay") || p === "mega") return "megaplay";
+  if (p.includes("vidsrc") || p === "vidsrcto" || p === "aura") return "vidsrc";
   if (p) return p;
   try {
     const u = new URL(url);
@@ -504,6 +535,8 @@ export function getProviderCanonicalKey(provider: unknown, url: string): string 
     if (host.includes("vidzy")) return "vidzy";
     if (host.includes("vidy") || host.includes("wecollege") || host.includes("goldenkite") || host.includes("moon")) return "vidy";
     if (host.includes("hscow") || host.includes("fcxmb") || host.includes("bhcxy")) return "castle";
+    if (host.includes("nexabloom") || host.includes("megaplay") || host.includes("mysubsplay") || host.includes("emeralddrift")) return "megaplay";
+    if (host.includes("vidsrc") || host.includes("birchandbramble") || host.includes("pebblebeachpottery") || host.includes("stellarconductornexus")) return "vidsrc";
     return `host:${host}`;
   } catch {
     return `host:${url.split("/")[2] || "unknown"}`;
@@ -526,6 +559,13 @@ export function getProviderDisplayLabel(providerKey: string, fallback?: string):
     case "castle":
     case "steve":
       return "HLS · Multi-Language";
+    case "megaplay":
+    case "mega":
+      return "Anime · Sub & Dub · HLS";
+    case "vidsrc":
+    case "vidsrcto":
+    case "aura":
+      return "Multi-Quality · HLS";
     default:
       return fallback || "Multi-quality";
   }
@@ -540,9 +580,12 @@ export function getProviderDisplayLabel(providerKey: string, fallback?: string):
 export function serverGroupKey(
   provider: unknown,
   url: string,
-  _serverName?: string | undefined
+  version?: string | undefined
 ): string {
   const key = getProviderCanonicalKey(provider, url);
+  if (key === "megaplay" && (version === "sub" || version === "dub")) {
+    return `g-${shortHash(key)}-${version}`;
+  }
   return `g-${shortHash(key)}`;
 }
 
@@ -590,7 +633,7 @@ export function normalizeStreams(raw: StreamItem[]): StreamItem[] {
   const qualitiesBySlot = new Map<string, Array<{ quality: string; qualityLabel: string; url: string }>>();
 
   for (const item of items) {
-    const grp = serverGroupKey(item._providerKey, item.url);
+    const grp = serverGroupKey(item._providerKey, item.url, item.version);
     const slot = `${grp}||${item.lang ?? "unk"}`;
 
     const qList = qualitiesBySlot.get(slot) || [];
@@ -624,11 +667,10 @@ export function normalizeStreams(raw: StreamItem[]): StreamItem[] {
     const dup = (counters.get(countKey) || 0) + 1;
     counters.set(countKey, dup);
 
-    const id = `srv-${(qualityLabel || "auto").toLowerCase()}-${
-      language?.code || "unk"
-    }-${dup}`;
+    const id = `srv-${(qualityLabel || "auto").toLowerCase()}-${language?.code || "unk"
+      }-${dup}`;
 
-    const grp = serverGroupKey(item._providerKey, item.url);
+    const grp = serverGroupKey(item._providerKey, item.url, item.version);
     const providerLabel = getProviderDisplayLabel(item._providerKey, language?.label);
 
     const slot = `${grp}||${item.lang ?? "unk"}`;
@@ -653,6 +695,9 @@ export function normalizeStreams(raw: StreamItem[]): StreamItem[] {
       version,
       type: item.type,
       direct: item.direct,
+      intro: item.intro,
+      outro: item.outro,
+      thumbnails: item.thumbnails,
       qualities: allQualities && allQualities.length > 1 ? allQualities : undefined,
       subtitles: Array.isArray(item.subtitles)
         ? item.subtitles.filter((s) => s && typeof s.url === "string")
@@ -660,14 +705,14 @@ export function normalizeStreams(raw: StreamItem[]): StreamItem[] {
     });
   }
 
-  // ── 4. Sort: Box (MovieBox) → Sunny (NetMirror) → Titan (Vidy) → Ari (Vixsrc) → Nova (Vidzy) ─
-  const PROVIDER_ORDER = ["moviebox", "netmirror", "vidy", "videasy", "vixsrc", "vidzy"];
+  // ── 4. Sort: MegaPlay (for anime) → VidSrc → Box (MovieBox) → Sunny (NetMirror) → Titan (Vidy) → Steve (Castle) → Ari (Vixsrc) → Nova (Vidzy) ─
+  const PROVIDER_ORDER = ["megaplay", "vidsrc", "moviebox", "netmirror", "vidy", "videasy", "castle", "vixsrc", "vidzy"];
   out.sort((a, b) => {
     // 1. Sort by provider order first
     const getOrder = (item: StreamItem) => {
       for (let i = 0; i < PROVIDER_ORDER.length; i++) {
         const p = PROVIDER_ORDER[i];
-        if (item.group === `g-${shortHash(p)}`) return i;
+        if (item.group?.startsWith(`g-${shortHash(p)}`)) return i;
       }
       return 99;
     };
@@ -695,7 +740,7 @@ export function normalizeStreams(raw: StreamItem[]): StreamItem[] {
     let name = nameByGroup.get(key);
     if (!name) {
       for (const [p, codename] of Object.entries(CANONICAL_CODENAMES)) {
-        if (key === `g-${shortHash(p)}`) {
+        if (key.startsWith(`g-${shortHash(p)}`)) {
           name = codename;
           break;
         }
@@ -767,9 +812,14 @@ export async function getClientGeo(): Promise<{ ip?: string; country_code?: stri
   if (cachedClientGeo) return cachedClientGeo;
   if (typeof window === "undefined") return null;
 
+  // A hung geo lookup must not delay the stream request: streams still work
+  // without the extra IP/region hints, so give it a short deadline.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3000);
   try {
     const res = await fetch("https://get.geojs.io/v1/ip/geo.json", {
       cache: "force-cache",
+      signal: controller.signal,
     });
     if (res.ok) {
       const data = await res.json();
@@ -782,7 +832,9 @@ export async function getClientGeo(): Promise<{ ip?: string; country_code?: stri
         return cachedClientGeo;
       }
     }
-  } catch {}
+  } catch { } finally {
+    clearTimeout(timer);
+  }
   return null;
 }
 
@@ -834,24 +886,45 @@ export async function fetchMovieBoxClientHeaders(
 
 export async function fetchStreams(input: {
   type: "movie" | "tv";
-  tmdbId: number | string;
+  tmdbId?: number | string;
   season?: number;
   episode?: number;
   lang?: string;
+  anilistId?: number | string;
+  malId?: number | string;
+  anime?: boolean;
+  subType?: "sub" | "dub";
 }): Promise<StreamsResult> {
-  const { type, tmdbId, season, episode, lang } = input;
-  const apiType = type === "movie" ? "movie" : "series";
+  const { type, tmdbId, season, episode, lang, anilistId, malId, anime, subType } = input;
 
   // Pre-fetch client geolocation so backend MovieBox signatures match the user's actual device & IP
   const geo = await getClientGeo();
 
   const params = new URLSearchParams();
-  if (season) params.set("season", String(season));
-  if (episode) params.set("episode", String(episode));
-  if (lang) params.set("lang", lang);
   if (geo?.ip) params.set("clientIp", geo.ip);
   if (geo?.country_code) params.set("region", geo.country_code);
   if (geo?.timezone) params.set("timezone", geo.timezone);
+  if (lang) params.set("lang", lang);
+  if (subType) params.set("subType", subType);
+
+  let apiPath: string;
+
+  if (anime && anilistId) {
+    // Anime: use dedicated AniList-first endpoint — no TMDB ID needed in the URL
+    if (episode) params.set("episode", String(episode));
+    if (season) params.set("season", String(season));
+    if (malId) params.set("malId", String(malId));
+    apiPath = `/api/streams/anime/${encodeURIComponent(String(anilistId))}`;
+  } else {
+    // Movie / TV: standard TMDB-based endpoint
+    const apiType = type === "movie" ? "movie" : "series";
+    const targetId = tmdbId || anilistId || 0;
+    if (season) params.set("season", String(season));
+    if (episode) params.set("episode", String(episode));
+    if (anilistId) params.set("anilistId", String(anilistId));
+    if (malId) params.set("malId", String(malId));
+    apiPath = `/api/streams/${apiType}/${encodeURIComponent(String(targetId))}`;
+  }
 
   const queryStr = params.toString() ? `?${params.toString()}` : "";
   const replicas = getOrderedReplicas();
@@ -861,7 +934,7 @@ export async function fetchStreams(input: {
     const started = nowMs();
     try {
       const { status, data } = await fetchJson(
-        `${replicaBase}/api/streams/${apiType}/${encodeURIComponent(String(tmdbId))}${queryStr}`
+        `${replicaBase}${apiPath}${queryStr}`
       );
 
       if (status >= 500 || status === 429) {

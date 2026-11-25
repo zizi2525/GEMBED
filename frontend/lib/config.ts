@@ -21,7 +21,7 @@ export const PROMO_TEXT =
   `✨ Streamed on ${PLAYER_NAME} · Enjoy the Show`;
 
 /** Default accent colour (hex, no leading #). Overridable per-request via ?color= */
-export const DEFAULT_ACCENT = (process.env.ACCENT_COLOR || "ef4444").replace(
+export const DEFAULT_ACCENT = (process.env.ACCENT_COLOR || "3b82f6").replace(
   /^#/,
   ""
 );

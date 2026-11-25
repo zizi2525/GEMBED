@@ -55,3 +55,9 @@ export function resolveAutoNext(sp: QueryMap): boolean {
   if (isFalsy(sp.autonext) || isFalsy(sp.autoplayNextEpisode)) return false;
   return true;
 }
+
+/** `anime`: enable anime mode (AniList / Megaplay resolver). */
+export function resolveAnime(sp: QueryMap): boolean {
+  return isTruthy(sp.anime);
+}
+
