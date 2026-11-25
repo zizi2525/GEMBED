@@ -144,7 +144,7 @@ async function getVideoV1(securityKey, movieId, episodeId, languageId, resolutio
   return decryptedJson(await requestCastle(url), securityKey);
 }
 
-async function getVideo2(securityKey, movieId, episodeId, resolution = 2) {
+async function getVideo2(securityKey, movieId, episodeId, resolution = 2, languageId = null) {
   const url = `${CASTLE_BASE}/film-api/v2.0.1/movie/getVideo2?clientType=${CLIENT}&packageName=${PKG}&channel=${CHANNEL}&lang=${LANG}`;
   const body = {
     mode: '1',
@@ -155,6 +155,7 @@ async function getVideo2(securityKey, movieId, episodeId, resolution = 2) {
     androidVersion: '13',
     movieId: String(movieId),
     episodeId: String(episodeId),
+    ...(languageId ? { languageId: String(languageId) } : {}),
     isNewUser: 'true',
     resolution: String(resolution),
     packageName: PKG,
@@ -192,57 +193,124 @@ function formatSize(size) {
   return 'Unknown';
 }
 
-function findMovieId(searchResult, tmdbTitle) {
-  const data = extractDataBlock(searchResult);
-  const rows = data.rows || [];
-  if (!rows.length) throw new Error('No search results found');
-  const searchLower = (tmdbTitle || '').toLowerCase();
-
-  for (const item of rows) {
-    const itemTitle = String(item.title || item.name || '').toLowerCase();
-    if (itemTitle && (itemTitle.includes(searchLower) || searchLower.includes(itemTitle))) {
-      const id = item.id || item.redirectId || item.redirectIdStr;
-      if (id) return String(id);
-    }
-  }
-  const first = rows[0];
-  const id = first.id || first.redirectId || first.redirectIdStr;
-  if (id) return String(id);
-  throw new Error('Could not extract movie ID from search results');
+function normalizeCastleTitle(str) {
+  return String(str || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-function processVideoResponse(videoData, mediaTitle, resolution, languageInfo) {
+function extractRowYear(item) {
+  const raw = item?.year ?? item?.publishTime ?? item?.releaseYear;
+  if (!raw) return null;
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return null;
+  if (num > 1900 && num < 2100) return Math.round(num);
+  if (num > 1e11) return new Date(num).getUTCFullYear();
+  if (num > 1e8) return new Date(num * 1000).getUTCFullYear();
+  return null;
+}
+
+function findMovieId(searchResult, tmdbTitle, targetYear = null, isTv = false) {
+  const data = extractDataBlock(searchResult);
+  const rows = data.rows || [];
+  if (!rows.length) return null;
+
+  const wantNorm = normalizeCastleTitle(tmdbTitle);
+  const wantType = isTv ? 1 : 2; // Castle: 1 = TV series, 2 = Movie
+  let bestId = null;
+  let bestScore = -1;
+
+  for (const item of rows) {
+    const rawTitle = String(item.title || item.name || '');
+    const itemNorm = normalizeCastleTitle(rawTitle);
+    if (!itemNorm || !wantNorm) continue;
+
+    let score = 0;
+    if (itemNorm === wantNorm) {
+      score += 100;
+    } else if (
+      itemNorm.startsWith(wantNorm + ' ') &&
+      !/\b(part|season|encore|special|remake)\b/i.test(itemNorm.slice(wantNorm.length))
+    ) {
+      score += 40;
+    } else {
+      // Do not match unrelated titles (e.g. "Dune" vs "Dune: Part Two" or "Breaking" vs "Breaking Bad")
+      continue;
+    }
+
+    const rowType = Number(item.movieType ?? item.type);
+    if (rowType === wantType) {
+      score += 40;
+    } else if (rowType === 1 || rowType === 2) {
+      score -= 60;
+    }
+
+    const rowYear = extractRowYear(item);
+    if (targetYear && rowYear) {
+      const diff = Math.abs(rowYear - targetYear);
+      if (diff === 0) score += 30;
+      else if (diff === 1) score += 15;
+      else score -= 35;
+    }
+
+    const id = item.id || item.redirectId || item.redirectIdStr;
+    if (id && score > bestScore) {
+      bestScore = score;
+      bestId = String(id);
+    }
+  }
+
+  return bestScore >= 60 ? bestId : null;
+}
+
+function formatCastleSubtitles(rawSubs) {
+  if (!Array.isArray(rawSubs)) return [];
+  const seen = new Set();
+  const out = [];
+  for (let i = 0; i < rawSubs.length; i++) {
+    const s = rawSubs[i];
+    if (!s || !s.url || seen.has(s.url)) continue;
+    seen.add(s.url);
+    out.push({
+      id: `castle-sub-${s.abbreviate || 'cc'}-${i}`,
+      url: s.url,
+      lang: (s.abbreviate || 'en').toLowerCase(),
+      label: s.title || s.abbreviate || 'Subtitles',
+      default: Boolean(s.isDefault),
+    });
+  }
+  return out;
+}
+
+function processVideoResponse(videoData, mediaTitle, resolution, trackInfo = {}) {
   const streams = [];
   const data = extractDataBlock(videoData);
   const videoUrl = data.videoUrl;
   if (!videoUrl) return streams;
 
   const quality = QUALITY_MAP[resolution] || `${resolution}p`;
+  const langLabel = trackInfo.langLabel || 'Original';
+  const langCode = trackInfo.langCode || 'en';
+  const version = trackInfo.version || 'vo';
+  const subtitles = formatCastleSubtitles(data.subtitles);
 
-  if (Array.isArray(data.videos) && data.videos.length > 0) {
-    for (const video of data.videos) {
-      const q = String(video.resolutionDescription || video.resolution || quality).replace(/^(SD|HD|FHD)\s+/i, '');
-      const name = languageInfo ? `Castle · ${q} · ${languageInfo}` : `Castle · ${q}`;
-      streams.push({
-        name,
-        title: mediaTitle,
-        url: video.url || videoUrl,
-        quality: q,
-        size: formatSize(video.size || data.size),
-        languageInfo: languageInfo || 'Shared'
-      });
-    }
-  } else {
-    const name = languageInfo ? `Castle · ${quality} · ${languageInfo}` : `Castle · ${quality}`;
-    streams.push({
-      name,
-      title: mediaTitle,
-      url: videoUrl,
-      quality,
-      size: formatSize(data.size),
-      languageInfo: languageInfo || 'Shared'
-    });
-  }
+  const name = `Castle · ${quality} · ${langLabel}`;
+  streams.push({
+    name,
+    title: mediaTitle,
+    url: videoUrl,
+    quality,
+    lang: langCode,
+    langLabel,
+    version,
+    subtitles: subtitles.length ? subtitles : undefined,
+    size: formatSize(data.size),
+    languageInfo: langLabel,
+  });
   return streams;
 }
 
@@ -271,10 +339,17 @@ async function getCastleStreams(tmdbId, mediaType = 'movie', seasonNum = null, e
 
     const securityKey = await getSecurityKey();
 
-    const searchTerm = year ? `${title} ${year}` : title;
-    console.log(`[Castle] Searching for "${searchTerm}"...`);
-    const searchResult = await searchCastle(securityKey, searchTerm);
-    let movieId = findMovieId(searchResult, title);
+    console.log(`[Castle] Searching for "${title}" (${year || 'n/a'}, ${isTv ? 'tv' : 'movie'})...`);
+    const searchResult = await searchCastle(securityKey, title);
+    let movieId = findMovieId(searchResult, title, year, isTv);
+    if (!movieId && year) {
+      const retryResult = await searchCastle(securityKey, `${title} ${year}`);
+      movieId = findMovieId(retryResult, title, year, isTv);
+    }
+    if (!movieId) {
+      console.warn(`[Castle] No matching ${isTv ? 'series' : 'movie'} found for "${title}" (${year || ''})`);
+      return [];
+    }
     console.log(`[Castle] Found movieId: ${movieId}`);
 
     let details = await getDetailsCastle(securityKey, movieId);
@@ -305,56 +380,86 @@ async function getCastleStreams(tmdbId, mediaType = 'movie', seasonNum = null, e
     }
 
     const epObj = episodes.find((e) => String(e.id) === episodeId);
-    const tracks = epObj?.tracks || [];
+    const tracks = Array.isArray(epObj?.tracks) ? epObj.tracks : [];
 
-    const resolution = 2; // Default 720p base
+    const resolution = 2; // 720p base (free tier without VIP restriction)
+    const origLang = (tmdb.original_language || 'en').toLowerCase();
     let rawStreams = [];
 
-    // Check per-language tracks (V1)
-    for (let i = 0; i < tracks.length; i++) {
-      const track = tracks[i];
-      const langName = track.languageName || track.abbreviate || `Lang${i + 1}`;
-      if (track.existIndividualVideo && track.languageId) {
-        try {
-          const videoData = await getVideoV1(securityKey, movieId, episodeId, String(track.languageId), resolution);
-          const langStreams = processVideoResponse(videoData, mediaTitle, resolution, langName);
-          rawStreams.push(...langStreams);
-        } catch (e) {
-          console.warn(`[Castle] ${langName}: v1 failed - ${e.message}`);
-        }
+    if (tracks.length > 0) {
+      // Fetch all available audio language tracks in parallel via getVideo2(languageId)
+      const trackResults = await Promise.all(
+        tracks.map(async (track, i) => {
+          const langCode = String(track.abbreviate || '').toLowerCase() || 'en';
+          const langName = track.languageName || langCode.toUpperCase() || `Lang${i + 1}`;
+          const isOrig = langCode === origLang || langCode === 'ost';
+          try {
+            const videoData = await getVideo2(
+              securityKey,
+              movieId,
+              episodeId,
+              resolution,
+              track.languageId ? String(track.languageId) : null
+            );
+            return processVideoResponse(videoData, mediaTitle, resolution, {
+              langCode: langCode === 'ost' ? origLang : langCode,
+              langLabel: isOrig ? `${langName} (Original)` : `${langName} (Dub)`,
+              version: isOrig ? 'vo' : 'dub',
+            });
+          } catch (e) {
+            console.warn(`[Castle] ${langName}: getVideo2 failed - ${e.message}`);
+            return [];
+          }
+        })
+      );
+      rawStreams = trackResults.flat();
+    }
+
+    // Fallback to default shared video2 if no tracks list was present
+    if (!rawStreams.length) {
+      const videoData = await getVideo2(securityKey, movieId, episodeId, resolution);
+      rawStreams = processVideoResponse(videoData, mediaTitle, resolution, {
+        langCode: origLang,
+        langLabel: 'Original',
+        version: 'vo',
+      });
+    }
+
+    // Group by URL so shared multi-audio HLS streams (e.g. Hindi + English) are labeled Multi-Audio
+    const byUrl = new Map();
+    for (const s of rawStreams) {
+      const existing = byUrl.get(s.url);
+      if (!existing) {
+        byUrl.set(s.url, { ...s, _langs: [s.langLabel] });
+      } else {
+        if (!existing._langs.includes(s.langLabel)) existing._langs.push(s.langLabel);
+        existing.lang = 'mul';
+        existing.langLabel = 'Multi-Audio';
+        existing.version = 'multi';
+        existing.name = `Castle · ${existing.quality} · Multi-Audio`;
       }
     }
+    const deduped = Array.from(byUrl.values());
+    deduped.sort((a, b) => qualityValue(b.quality) - qualityValue(a.quality));
 
-    // Fallback to shared video (V2)
-    if (!rawStreams.length) {
-      console.log('[Castle] No language tracks found, attempting shared video2...');
-      const videoData = await getVideo2(securityKey, movieId, episodeId, resolution);
-      rawStreams = processVideoResponse(videoData, mediaTitle, resolution, 'Shared');
-    }
-
-    // Sort by quality descending
-    rawStreams.sort((a, b) => qualityValue(b.quality) - qualityValue(a.quality));
-
-    // De-duplicate by URL and format as standard stream items
-    const seenUrls = new Set();
     const streams = [];
-
-    for (let i = 0; i < rawStreams.length; i++) {
-      const s = rawStreams[i];
-      if (seenUrls.has(s.url)) continue;
-      seenUrls.add(s.url);
-
+    for (let i = 0; i < deduped.length; i++) {
+      const s = deduped[i];
       const isHls = s.url.includes('.m3u8');
       const isDash = s.url.includes('.mpd');
       const streamType = isHls ? 'm3u8' : (isDash ? 'dash' : 'mp4');
 
       streams.push({
-        id: `castle-${s.quality}-${i}`,
+        id: `castle-${s.lang}-${s.quality}-${i}`,
         name: s.name,
         title: s.title,
         url: s.url,
         quality: s.quality,
         qualityLabel: s.quality,
+        lang: s.lang,
+        langLabel: s.langLabel,
+        version: s.version,
+        subtitles: s.subtitles,
         provider: 'Castle',
         server: 'Castle',
         serverName: 'Castle',
