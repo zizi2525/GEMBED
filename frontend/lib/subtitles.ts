@@ -714,6 +714,8 @@ function assTimeToSeconds(tc: string): number {
 }
 
 function cleanAssText(raw: string): string {
+  // Skip ASS vector drawing commands (e.g. {\p1}m 0 0 l 100 0...)
+  if (/\{\\[^}]*p[1-9]\d*[^}]*\}/i.test(raw)) return "";
   return raw
     .replace(/\{[^}]*\}/g, "")
     .replace(/\\N|\\n/g, "\n")
@@ -726,7 +728,7 @@ export function parseASS(text: string): SubtitleCue[] {
   const cues: SubtitleCue[] = [];
   const lines = text.replace(/^\uFEFF/, "").replace(/\r/g, "").split("\n");
   let fields = ["Layer", "Start", "End", "Style", "Actor", "MarginL", "MarginR", "MarginV", "Effect", "Text"];
-  let inEvents = false;
+  let inEvents = true;
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -773,7 +775,23 @@ export function parseASS(text: string): SubtitleCue[] {
       cues.push({ start, end, text: body });
     }
   }
-  return cues;
+
+  // Sort chronologically (ASS files often group signs/songs out of order)
+  cues.sort((a, b) => a.start - b.start || a.end - b.end);
+
+  // Merge simultaneous/overlapping cues at the same timestamp so signs + dialogue both show
+  const merged: SubtitleCue[] = [];
+  for (const cue of cues) {
+    const prev = merged[merged.length - 1];
+    if (prev && Math.abs(prev.start - cue.start) < 0.05 && Math.abs(prev.end - cue.end) < 0.05) {
+      if (!prev.text.includes(cue.text)) {
+        prev.text = `${prev.text}\n${cue.text}`;
+      }
+    } else {
+      merged.push(cue);
+    }
+  }
+  return merged;
 }
 
 export function parseSubtitles(text: string): SubtitleCue[] {
@@ -845,8 +863,11 @@ export async function fetchAndParseSub(
       text = decoder.decode(uint8);
     }
 
-    // Replace all promotional watermarks, domains, and uploader ads with our site's promotion
-    text = replacePromotions(text);
+    const isAss = /\[Script Info\]/i.test(text) || /^\s*Dialogue\s*:/im.test(text);
+    // Replace promotions on VTT/SRT text; ASS handles promos per-Dialogue text inside parseASS
+    if (!isAss) {
+      text = replacePromotions(text);
+    }
 
     const cues = parseSubtitles(text);
     if (!cues.length) return null;

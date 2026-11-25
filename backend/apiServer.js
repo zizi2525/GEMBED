@@ -11,6 +11,12 @@ const { resolveImdbId } = require('./utils/tmdb');
 const { applyFilters, maskStreams, getCodename } = require('./utils/streamFilters');
 const { fetchAniZipMappings } = require('./providers/megaplay');
 const { validateOriginMiddleware } = require('./utils/origin');
+const {
+  isTurnstileEnabled,
+  signProof,
+  verifyTurnstileToken,
+  turnstileMiddleware,
+} = require('./utils/turnstile');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -432,13 +438,35 @@ app.get(['/api/moviebox/client-headers', '/api/box/client-headers'], async (req,
   }
 });
 
+// Cloudflare Turnstile verification endpoint (mints short-lived HMAC proof)
+app.post('/api/turnstile/verify', async (req, res) => {
+  if (!isTurnstileEnabled()) {
+    const issued = signProof();
+    return res.json({ success: true, bypass: true, ...issued });
+  }
+  const token = req.body?.token || req.headers['x-turnstile-token'];
+  if (!token) {
+    return res.status(400).json({ success: false, error: 'MISSING_TOKEN' });
+  }
+  try {
+    const check = await verifyTurnstileToken(String(token), getClientIp(req));
+    if (!check.success) {
+      return res.status(403).json({ success: false, error: check.error || 'TURNSTILE_FAILED', codes: check.codes || [] });
+    }
+    const issued = signProof();
+    return res.json({ success: true, ...issued });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ─── Anime-first aggregate: AniList ID is the primary key ─────────────────────
 // Flow:
 //   1. MegaPlay is called immediately with the AniList ID (no TMDB lookup needed)
 //   2. ani.zip resolves the TMDB ID in parallel
 //   3. All other enabled providers are called with the resolved TMDB ID + forceAnime=true
 //   4. All streams are merged, filtered, proxy-wrapped and returned
-app.get('/api/streams/anime/:anilistId', async (req, res) => {
+app.get('/api/streams/anime/:anilistId', turnstileMiddleware, async (req, res) => {
   const { anilistId } = req.params;
   const anilistIdNum = Number(anilistId);
   if (!anilistIdNum || isNaN(anilistIdNum)) {
@@ -463,11 +491,13 @@ app.get('/api/streams/anime/:anilistId', async (req, res) => {
 
     const providerTimings = {};
 
-    // 3. Split: MegaPlay runs now (needs only anilistId); others wait for TMDB ID
+    // 3. For anime, use MegaPlay (AniList-first) and Vidzy (mapped via ani.zip -> TMDB) only
+    const ANIME_TMDB_PROVIDERS = new Set(['vidzy']);
     const megaprovider = getProvider('megaplay');
     const otherProviders = selectedProviders.filter(name => {
+      if (!ANIME_TMDB_PROVIDERS.has(name)) return false;
       const p = getProvider(name);
-      return p && p.enabled && name !== 'megaplay';
+      return p && p.enabled;
     });
 
     // Run MegaPlay immediately
@@ -569,7 +599,7 @@ app.get('/api/streams/anime/:anilistId', async (req, res) => {
 });
 
 // Aggregate streams across all enabled providers
-app.get('/api/streams/:type/:tmdbId', async (req, res) => {
+app.get('/api/streams/:type/:tmdbId', turnstileMiddleware, async (req, res) => {
   const { type, tmdbId } = req.params;
   if (!['movie', 'series'].includes(type)) return res.status(400).json({ success: false, error: 'INVALID_TYPE' });
   const season = req.query.season ? Number(req.query.season) : null;
@@ -579,7 +609,9 @@ app.get('/api/streams/:type/:tmdbId', async (req, res) => {
     metrics.streamRequests++;
     const tmdbType = type === 'movie' ? 'movie' : 'tv';
     const imdbId = await resolveImdbId(tmdbType, tmdbId); if (imdbId) metrics.tmdbToImdbLookups++;
-    const selectedProviders = (config.defaultProviders.length ? config.defaultProviders : listProviders().map(p => p.name));
+    const isAnimeRequest = req.query.anime === '1' || req.query.anime === 'true' || Boolean(req.query.anilistId);
+    const selectedProviders = (config.defaultProviders.length ? config.defaultProviders : listProviders().map(p => p.name))
+      .filter(name => isAnimeRequest || name !== 'megaplay');
     const providerTimings = {};
     const results = await Promise.all(selectedProviders.map(async name => {
       const prov = getProvider(name);
@@ -635,7 +667,7 @@ app.get('/api/streams/:type/:tmdbId', async (req, res) => {
 });
 
 // Provider-specific streams
-app.get('/api/streams/:provider/:type/:tmdbId', async (req, res) => {
+app.get('/api/streams/:provider/:type/:tmdbId', turnstileMiddleware, async (req, res) => {
   const { provider, type, tmdbId } = req.params;
   if (!['movie', 'series'].includes(type)) return res.status(400).json({ success: false, error: 'INVALID_TYPE' });
   const season = req.query.season ? Number(req.query.season) : null;

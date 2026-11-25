@@ -9,6 +9,8 @@
  *  - every replica call has a hard timeout, and duplicates are removed
  */
 
+import { isTurnstileConfigured, waitForTurnstileProof } from "./turnstile";
+
 export interface StreamSubtitle {
   url: string;
   label: string;
@@ -62,9 +64,9 @@ export interface StreamsResult {
 
 export type ProbeResult = "fast" | "slow" | "offline";
 
-// The backend resolves every provider before answering, and the slowest one can
-// legitimately take ~20s; anything shorter produces false "unavailable" errors.
-const REQUEST_TIMEOUT_MS = 25_000;
+// The backend caps each provider at PROVIDER_TIMEOUT_MS (12s default), so
+// aggregate requests finish well under 35s even if one upstream stalls.
+const REQUEST_TIMEOUT_MS = 35_000;
 
 /** How long a failing replica is skipped before it is retried. */
 const REPLICA_COOLDOWN_MS = 30_000;
@@ -391,7 +393,7 @@ function detectLanguage(
     if (concrete) {
       return { code: concrete.code, label: `${concrete.label} (Original)` };
     }
-    return { code: "vo", label: "Original (VO)" };
+    return { code: "vo", label: "Original" };
   }
 
   // 3. Explicit VF / French Dub
@@ -420,7 +422,7 @@ function detectLanguage(
 
   // 5. English on multi-language provider (e.g. Vidy Miami 4K is original audio)
   if ((providerKey === "vidy" || providerKey === "videasy") && (normLang === "en" || normLang === "eng")) {
-    return { code: "vo", label: "Original (VO)" };
+    return { code: "vo", label: "Original" };
   }
 
   // 6. German Dub
@@ -505,8 +507,8 @@ export const CANONICAL_CODENAMES: Record<string, string> = {
   steve: "Steve",
   showbox: "Cloud",
   cloud: "Cloud",
-  megaplay: "MegaPlay",
-  mega: "MegaPlay",
+  megaplay: "Mega",
+  mega: "Mega",
   vidsrc: "Aura",
   vidsrcto: "Aura",
   aura: "Aura",
@@ -786,12 +788,15 @@ export function pickBestStreamIndex(
   return best;
 }
 
-async function fetchJson(url: string): Promise<{ status: number; data: unknown }> {
+async function fetchJson(
+  url: string,
+  extraHeaders?: Record<string, string>
+): Promise<{ status: number; data: unknown }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...extraHeaders },
       cache: "no-store",
       signal: controller.signal,
     });
@@ -927,6 +932,13 @@ export async function fetchStreams(input: {
   }
 
   const queryStr = params.toString() ? `?${params.toString()}` : "";
+  const turnstileProof = isTurnstileConfigured()
+    ? await waitForTurnstileProof(5000)
+    : null;
+  const reqHeaders: Record<string, string> = turnstileProof
+    ? { "x-turnstile-proof": turnstileProof }
+    : {};
+
   const replicas = getOrderedReplicas();
   let lastError = "";
 
@@ -934,7 +946,8 @@ export async function fetchStreams(input: {
     const started = nowMs();
     try {
       const { status, data } = await fetchJson(
-        `${replicaBase}${apiPath}${queryStr}`
+        `${replicaBase}${apiPath}${queryStr}`,
+        reqHeaders
       );
 
       if (status >= 500 || status === 429) {

@@ -204,7 +204,7 @@ async function resolveMegaplay(input = {}) {
 
     const result = {
       url: finalUrl,
-      title: `${type === 'dub' ? 'English Dub' : 'VO (Japanese Sub)'} · 1080p`,
+      title: `${type === 'dub' ? 'English Dub' : 'Japanese (Sub)'} · 1080p`,
       type,
       tracks: sourcesJson.tracks || [],
       intro: sourcesJson.intro || null,
@@ -527,18 +527,18 @@ async function getMegaplayStreams(
     }
 
     streams.push({
-      id: `megaplay-${res.type}-1080-${idx}`,
-      name: `MegaPlay · 1080p · ${langLabel}`,
-      title: `MegaPlay · 1080p · ${langLabel}`,
+      id: `mega-${res.type}-1080-${idx}`,
+      name: `Mega · 1080p · ${langLabel}`,
+      title: `Mega · 1080p · ${langLabel}`,
       url: res.url,
       quality: '1080p',
       qualityLabel: '1080p',
       lang: langCode,
       langLabel,
       version: isDub ? 'dub' : 'sub',
-      provider: 'MegaPlay',
-      server: 'MegaPlay',
-      serverName: 'MegaPlay',
+      provider: 'megaplay',
+      server: 'Mega',
+      serverName: 'Mega',
       type: 'm3u8',
       direct: true,
       subtitles: formattedSubtitles,

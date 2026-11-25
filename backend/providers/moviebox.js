@@ -334,11 +334,18 @@ async function fetchFreshSession(host) {
   return currentSession.token;
 }
 
+let sessionInFlight = null;
+
 async function ensureSession(host = HOST_POOL[0]) {
   if (isSessionValid(currentSession)) {
     return currentSession.token;
   }
-  return await fetchFreshSession(host);
+  if (!sessionInFlight) {
+    sessionInFlight = fetchFreshSession(host).finally(() => {
+      sessionInFlight = null;
+    });
+  }
+  return await sessionInFlight;
 }
 
 const RETRY_STATUS_CODES = [403, 406, 407, 429, 500, 502, 503, 504];
@@ -350,7 +357,8 @@ async function executeApi(method, pathQuery, body = null, clientGeo = null) {
   const startIdx = activeHostIdx;
   let lastErr = null;
 
-  for (let i = 0; i < HOST_POOL.length; i++) {
+  const maxAttempts = Math.min(3, HOST_POOL.length);
+  for (let i = 0; i < maxAttempts; i++) {
     const idx = (startIdx + i) % HOST_POOL.length;
     const host = HOST_POOL[idx];
 
@@ -361,9 +369,9 @@ async function executeApi(method, pathQuery, body = null, clientGeo = null) {
 
       let res;
       if (method.toUpperCase() === 'POST') {
-        res = await axios.post(url, bodyStr, getAxiosConfig('moviebox', { headers, timeout: 7000 }));
+        res = await axios.post(url, bodyStr, getAxiosConfig('moviebox', { headers, timeout: 5000 }));
       } else {
-        res = await axios.get(url, getAxiosConfig('moviebox', { headers, timeout: 7000 }));
+        res = await axios.get(url, getAxiosConfig('moviebox', { headers, timeout: 5000 }));
       }
 
       absorbXUserHeader(res.headers);
@@ -734,7 +742,7 @@ function normalizeLangCode(rawCode = '') {
 }
 
 function normalizeLangLabel(code, rawName, isSub = false) {
-  if (code === 'en') return 'Original (VO)';
+  if (code === 'en') return 'Original';
   const tag = isSub ? 'Sub' : 'Dub';
   switch (code) {
     case 'fr': return `French (${tag})`;
@@ -843,16 +851,17 @@ async function getMovieBoxStreams(tmdbId, mediaType = 'movie', season = 1, episo
     if (typeof mapEntry.subjectId === 'object') {
       mapEntry.subjectId = mapEntry.subjectId.standardSubjectId || mapEntry.subjectId.subjectId;
     }
-    // Check if French dub is missing and can be enriched
+    // Check if French dub is missing and can be enriched (only attempt once per map entry)
     const hasFrench = Array.isArray(mapEntry.dubs) && mapEntry.dubs.some((d) => d.lanCode === 'fr');
-    if (!hasFrench && mapEntry.title) {
+    if (!hasFrench && !mapEntry.frenchChecked && mapEntry.title) {
       try {
         const enrichedDubs = await enrichDubsWithFrench(mapEntry.title, mapEntry.year, isTv, seasonNum, mapEntry.dubs || []);
+        mapEntry.frenchChecked = true;
         if (enrichedDubs.some((d) => d.lanCode === 'fr')) {
           mapEntry.dubs = enrichedDubs;
-          map[mapKey] = mapEntry;
-          saveMap(map);
         }
+        map[mapKey] = mapEntry;
+        saveMap(map);
       } catch (e) {}
     }
 
@@ -865,12 +874,10 @@ async function getMovieBoxStreams(tmdbId, mediaType = 'movie', season = 1, episo
     }
   }
 
-  // 2. Fetch TMDB Details if needed for search
-  const tmdbDetails = await getDetails(isTv ? 'tv' : 'movie', tmdbId);
-  if (!tmdbDetails && (!mapEntry || !mapEntry.subjectId)) return [];
-
-  // 3. Resolve exact match via API search if not mapped yet
+  // 2. Resolve exact match via TMDB + API search if not mapped yet
   if (!mapEntry || !mapEntry.subjectId) {
+    const tmdbDetails = await getDetails(isTv ? 'tv' : 'movie', tmdbId);
+    if (!tmdbDetails) return [];
     try {
       const searchRes = await searchExactSubject(tmdbDetails, mediaType, seasonNum);
       const subjectId = searchRes?.subjectId;
@@ -921,12 +928,13 @@ async function getMovieBoxStreams(tmdbId, mediaType = 'movie', season = 1, episo
   const allDubs = mapEntry.dubs;
   const dubsToFetch = [...allDubs];
 
-  // 5. Fetch fresh resources for all dubs in controlled batches with round-robin pool to avoid 429 rate limits
+  // 5. Fetch fresh resources for all dubs in parallel batches across the host pool
   const resourceIdsToTryCaptions = [];
   const dubResults = [];
+  const BATCH_SIZE = 6;
 
-  for (let i = 0; i < dubsToFetch.length; i += 2) {
-    const batch = dubsToFetch.slice(i, i + 2);
+  for (let i = 0; i < dubsToFetch.length; i += BATCH_SIZE) {
+    const batch = dubsToFetch.slice(i, i + BATCH_SIZE);
     const batchResults = await Promise.all(
       batch.map(async (dub) => {
         try {
@@ -954,17 +962,18 @@ async function getMovieBoxStreams(tmdbId, mediaType = 'movie', season = 1, episo
       })
     );
     dubResults.push(...batchResults);
-    if (i + 2 < dubsToFetch.length) {
-      await new Promise((r) => setTimeout(r, 80)); // 80ms gentle throttle between dub batches
-    }
   }
 
-  // 6. Fetch and merge subtitles across resource candidates (original audio first)
+  // 6. Fetch and merge subtitles across top resource candidates in parallel (original audio first)
   const seenSubLangs = new Set();
   const mergedSubtitles = [];
   resourceIdsToTryCaptions.sort((a, b) => (b.isOriginal ? 1 : 0) - (a.isOriginal ? 1 : 0));
-  for (const { subjectId, resourceId } of resourceIdsToTryCaptions) {
-    const caps = await fetchExtCaptions(subjectId, resourceId);
+  const captionBatches = await Promise.all(
+    resourceIdsToTryCaptions.slice(0, 2).map(({ subjectId, resourceId }) =>
+      fetchExtCaptions(subjectId, resourceId)
+    )
+  );
+  for (const caps of captionBatches) {
     for (const sub of caps) {
       const code = (sub.lang || sub.label || '').toLowerCase();
       if (code && !seenSubLangs.has(code)) {

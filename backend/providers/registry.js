@@ -2,6 +2,8 @@ const { config } = require('../utils/config');
 const fs = require('fs');
 const path = require('path');
 
+const PROVIDER_TIMEOUT_MS = Math.max(3000, Number(process.env.PROVIDER_TIMEOUT_MS) || 20000);
+
 // Lazy load cache for providers
 const providerCache = new Map();
 
@@ -63,39 +65,60 @@ function createFetchFunction(providerInfo) {
       const mediaType = ctx.type === 'movie' ? 'movie' : 'tv';
       const t0 = Date.now();
 
-      let result;
-      if (providerInfo.name === 'showbox') {
-        // Special case for Showbox with TMDB key and cookies
-        const { getTmdbApiKey } = require('../utils/tmdbKey');
-        const tmdbApiKey = getTmdbApiKey();
-        if (!tmdbApiKey) {
-          console.warn('[registry] showbox skipped: TMDB API key missing');
-          return [];
+      const executeProvider = async () => {
+        if (providerInfo.name === 'showbox') {
+          // Special case for Showbox with TMDB key and cookies
+          const { getTmdbApiKey } = require('../utils/tmdbKey');
+          const tmdbApiKey = getTmdbApiKey();
+          if (!tmdbApiKey) {
+            console.warn('[registry] showbox skipped: TMDB API key missing');
+            return [];
+          }
+          const cookies = await getEffectiveCookies();
+          const previousConfig = global.currentRequestConfig;
+          global.currentRequestConfig = { ...(previousConfig || {}) };
+          let selected = null;
+          if (cookies.length > 0) {
+            const index = Math.floor(Math.random() * cookies.length);
+            selected = cookies[index];
+            global.currentRequestConfig.cookie = selected.startsWith('ui=') ? selected : `ui=${selected}`;
+            global.currentRequestConfig.cookies = cookies.map(c => c.startsWith('ui=') ? c : `ui=${c}`);
+            lastCookieStats = { selected: selected.slice(0, 16) + '...', index, total: cookies.length, remainingMB: null, timestamp: Date.now() };
+            console.log(`[registry] Cookie random pick index=${index} total=${cookies.length}`);
+          }
+          try {
+            const res = await module[funcName](mediaType, ctx.tmdbId, ctx.season || null, ctx.episode || null, null, selected);
+            if (global.currentRequestUserCookieRemainingMB != null) {
+              lastCookieStats.remainingMB = global.currentRequestUserCookieRemainingMB;
+            }
+            return res;
+          } finally {
+            global.currentRequestConfig = previousConfig || {};
+          }
         }
-        const cookies = await getEffectiveCookies();
-        const previousConfig = global.currentRequestConfig;
-        global.currentRequestConfig = { ...(previousConfig || {}) };
-        let selected = null;
-        if (cookies.length > 0) {
-          const index = Math.floor(Math.random() * cookies.length);
-          selected = cookies[index];
-          global.currentRequestConfig.cookie = selected.startsWith('ui=') ? selected : `ui=${selected}`;
-          global.currentRequestConfig.cookies = cookies.map(c => c.startsWith('ui=') ? c : `ui=${c}`);
-          lastCookieStats = { selected: selected.slice(0, 16) + '...', index, total: cookies.length, remainingMB: null, timestamp: Date.now() };
-          console.log(`[registry] Cookie random pick index=${index} total=${cookies.length}`);
-        }
-        result = await module[funcName](mediaType, ctx.tmdbId, ctx.season || null, ctx.episode || null, null, selected);
-        if (global.currentRequestUserCookieRemainingMB != null) {
-          lastCookieStats.remainingMB = global.currentRequestUserCookieRemainingMB;
-        }
-        global.currentRequestConfig = previousConfig || {};
-      } else {
         // Standard provider call (passes lang, clientGeo, and full ctx)
-        result = await module[funcName](ctx.tmdbId, mediaType, ctx.season || null, ctx.episode || null, ctx.lang || null, ctx.clientGeo || null, ctx);
-      }
+        return module[funcName](ctx.tmdbId, mediaType, ctx.season || null, ctx.episode || null, ctx.lang || null, ctx.clientGeo || null, ctx);
+      };
+
+      let timer = null;
+      let timedOut = false;
+      const result = await Promise.race([
+        executeProvider(),
+        new Promise((resolve) => {
+          timer = setTimeout(() => {
+            timedOut = true;
+            console.warn(`[registry] ${providerInfo.name} timed out after ${PROVIDER_TIMEOUT_MS}ms`);
+            resolve([]);
+          }, PROVIDER_TIMEOUT_MS);
+        }),
+      ]).finally(() => {
+        if (timer) clearTimeout(timer);
+      });
 
       const durationMs = Date.now() - t0;
-      console.log(`[registry] ${providerInfo.name} fetch duration ${durationMs}ms`);
+      if (!timedOut) {
+        console.log(`[registry] ${providerInfo.name} fetch duration ${durationMs}ms`);
+      }
 
       if (!Array.isArray(result)) return [];
 

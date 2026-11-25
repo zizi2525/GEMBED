@@ -504,7 +504,7 @@ function isStreamProxyEnabledFor(providerName, stream) {
         providerName = stream.provider;
     }
     const canonical = (providerName || '').toLowerCase().trim();
-    const name = canonical.startsWith('megaplay') ? 'megaplay' : canonical;
+    const name = (canonical === 'mega' || canonical.startsWith('megaplay')) ? 'megaplay' : canonical;
 
     // Aliases to ensure common variations / spelling differences are handled
     const aliases = [name];

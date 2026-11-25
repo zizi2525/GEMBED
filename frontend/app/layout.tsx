@@ -3,6 +3,7 @@ import { Bricolage_Grotesque, Manrope, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { PLAYER_NAME, PLAYER_TAGLINE, LOGO_SRC } from "@/lib/config";
 import { DebugGuard } from "@/components/debug-guard";
+import { TurnstileGate } from "@/components/turnstile-gate";
 
 const body = Manrope({
   subsets: ["latin"],
@@ -45,6 +46,7 @@ export default function RootLayout({
       </head>
       <body suppressHydrationWarning>
         <DebugGuard />
+        <TurnstileGate />
         {children}
       </body>
     </html>

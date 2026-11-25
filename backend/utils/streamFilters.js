@@ -73,8 +73,8 @@ const EXTRACTOR_CODENAMES = {
   steve: 'Steve',
   showbox: 'Cloud',
   cloud: 'Cloud',
-  megaplay: 'MegaPlay',
-  mega: 'MegaPlay',
+  megaplay: 'Mega',
+  mega: 'Mega',
   vidsrc: 'Aura',
   vidsrcto: 'Aura',
   aura: 'Aura'

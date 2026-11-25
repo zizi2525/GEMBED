@@ -73,7 +73,7 @@ function isOriginAllowed(origin, allowedList) {
 function setCorsHeaders(res, origin = '*') {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization, X-Requested-With, Origin, Accept');
+    res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization, X-Requested-With, Origin, Accept, X-Turnstile-Proof, X-Turnstile-Token');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
     res.setHeader('Vary', 'Origin');
 }

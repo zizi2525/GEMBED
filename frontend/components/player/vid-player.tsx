@@ -201,14 +201,31 @@ function formatTime(seconds: number) {
 function findCueAt(cues: SubtitleCue[], time: number): SubtitleCue | null {
   let lo = 0;
   let hi = cues.length - 1;
+  let hit = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
     const cue = cues[mid];
     if (time < cue.start) hi = mid - 1;
     else if (time > cue.end) lo = mid + 1;
-    else return cue;
+    else {
+      hit = mid;
+      break;
+    }
   }
-  return null;
+  if (hit < 0) return null;
+
+  // Scan nearby cues in case an earlier long-duration sign cue overlaps
+  const active: string[] = [];
+  const scanStart = Math.max(0, hit - 12);
+  for (let idx = scanStart; idx < cues.length; idx++) {
+    const c = cues[idx];
+    if (c.start > time) break;
+    if (time >= c.start && time <= c.end && c.text && !active.includes(c.text)) {
+      active.push(c.text);
+    }
+  }
+  if (active.length <= 1) return cues[hit];
+  return { start: cues[hit].start, end: cues[hit].end, text: active.join("\n") };
 }
 
 function cleanCueText(raw: string): string {

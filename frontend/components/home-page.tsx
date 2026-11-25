@@ -20,8 +20,6 @@ import {
   Star,
   ChevronDown,
   Gauge,
-  MonitorPlay,
-  CircleSlash2,
   Sparkles,
 } from "lucide-react";
 import { LANGS } from "@/lib/subtitles";
@@ -1490,35 +1488,6 @@ export function HomePage({ brand }: { brand: Brand }) {
             </div>
           </div>
         </section>
-
-        {/* -------------------------------- note -------------------------------- */}
-        <section className="mt-16">
-          <div
-            data-reveal
-            className="flex flex-col items-start gap-4 rounded-3xl border border-white/10 bg-house p-6 sm:flex-row sm:items-center sm:justify-between"
-          >
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-muted">
-                <CircleSlash2 className="h-4 w-4" />
-              </span>
-              <div>
-                <p className="text-[13px] font-semibold text-bone">No media is hosted here.</p>
-                <p className="mt-1 max-w-xl text-[12px] leading-relaxed text-muted">
-                  {brand.name} is a player and a proxy for publicly available sources.
-                  Titles and artwork come from TMDB; playback runs through the host
-                  that deploys it.
-                </p>
-              </div>
-            </div>
-            <a
-              href="#play"
-              className="flex shrink-0 items-center gap-2 rounded-xl bg-bone px-4 py-2.5 text-[12.5px] font-semibold text-ink transition hover:bg-white"
-            >
-              <MonitorPlay className="h-4 w-4" />
-              Back to the player
-            </a>
-          </div>
-        </section>
       </main>
 
       {/* -------------------------------- footer ------------------------------- */}
@@ -1536,10 +1505,7 @@ export function HomePage({ brand }: { brand: Brand }) {
               <span className="font-display font-semibold text-bone">{brand.name}</span>
             )}
             <span className="mx-2 text-muted/30">/</span>
-            Embeddable player for TMDB titles
-          </p>
-          <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted/60">
-            Metadata by TMDB · streams proxied by your host
+            Embeddable video player
           </p>
         </div>
       </footer>
