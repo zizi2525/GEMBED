@@ -721,18 +721,19 @@ export function normalizeStreams(raw: StreamItem[]): StreamItem[] {
     const orderDiff = getOrder(a) - getOrder(b);
     if (orderDiff !== 0) return orderDiff;
 
-    // 2. Within the same provider: highest quality first
-    const q = qualityRank(b.qualityLabel) - qualityRank(a.qualityLabel);
-    if (q !== 0) return q;
-
-    // 3. Original / VO first, then French, then others
+    // 2. Within the same provider: Original / Multi-Audio first, then French/English, then other dubs
     const langRank = (item: StreamItem) => {
-      if (item.lang === "vo" || item.langLabel?.includes("Original")) return 0;
+      if (item.version === "vo" || item.lang === "vo" || item.langLabel?.includes("Original")) return 0;
       if (item.lang === "mul" || item.langLabel?.includes("Multi")) return 1;
       if (item.lang === "fre" || item.langLabel?.includes("French")) return 2;
-      return 3;
+      if (item.lang === "eng" || item.langLabel?.includes("English")) return 3;
+      return 4;
     };
-    return langRank(a) - langRank(b);
+    const lDiff = langRank(a) - langRank(b);
+    if (lDiff !== 0) return lDiff;
+
+    // 3. Within the same language tier: highest quality first
+    return qualityRank(b.qualityLabel) - qualityRank(a.qualityLabel);
   });
 
   // ── 5. Assign codenames — canonical per provider ────────────────────────
@@ -776,10 +777,10 @@ export function pickBestStreamIndex(
   let bestScore = -Infinity;
   streams.forEach((stream, index) => {
     const langMatch = pref && stream.lang === pref ? 1 : 0;
-    const multiBonus = stream.lang === "mul" || stream.langLabel === "Multi-Audio" ? 2 : 0;
-    const originalBonus = stream.version === "vo" || stream.lang === "vo" || stream.langLabel === "Original" ? 1 : 0;
+    const multiBonus = stream.lang === "mul" || stream.langLabel?.includes("Multi") ? 1 : 0;
+    const originalBonus = stream.version === "vo" || stream.lang === "vo" || stream.langLabel?.includes("Original") ? 1 : 0;
     const score =
-      langMatch * 10_000 + multiBonus * 500 + qualityRank(stream.qualityLabel) * 10 + originalBonus;
+      langMatch * 25_000 + originalBonus * 12_000 + multiBonus * 10_000 + qualityRank(stream.qualityLabel);
     if (score > bestScore) {
       bestScore = score;
       best = index;
