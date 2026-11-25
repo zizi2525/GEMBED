@@ -19,6 +19,41 @@ const wasmModuleCache = new Map();
 // In-memory cache for resolved stream objects
 const streamCache = new Map();
 
+const API_BASE = 'https://data.vidsrc.sh';
+const WASM_HOST_SUFFIXES = ['.vidsrc.sh', '.vidsrcme.ru'];
+const WASM_HOSTS = new Set([new URL(API_BASE).hostname, 'data.vidsrcme.ru']);
+
+function validateWasmUrl(raw) {
+  const u = new URL(raw, API_BASE);
+  if (u.protocol !== 'https:') throw new Error(`WASM URL must be https (${u.protocol})`);
+  if (u.username || u.password || (u.port && u.port !== '443')) {
+    throw new Error('WASM URL has unexpected credentials or port');
+  }
+  if (!WASM_HOSTS.has(u.hostname) && !WASM_HOST_SUFFIXES.some((s) => u.hostname.endsWith(s))) {
+    throw new Error(`WASM URL host not allowed: ${u.hostname}`);
+  }
+  return u.href;
+}
+
+function validatePlayerUrl(raw, pinnedOrigin) {
+  const url = new URL(raw, pinnedOrigin);
+  const host = url.hostname.toLowerCase();
+  const bad =
+    url.protocol !== 'https:' ||
+    (url.port !== '' && url.port !== '443') ||
+    Boolean(url.username) ||
+    Boolean(url.password) ||
+    !url.pathname.startsWith('/embed/') ||
+    (pinnedOrigin !== undefined && url.origin !== pinnedOrigin) ||
+    host.includes(':') ||
+    /^[\d.]+$/.test(host) ||
+    !/\.[a-z][a-z0-9-]*$/.test(host) ||
+    host === 'localhost' ||
+    /\.(localhost|local|internal|lan|home|arpa)$/.test(host);
+  if (bad) throw new Error(`Unexpected VidSrc player URL: ${url.href}`);
+  return url;
+}
+
 function isCacheDisabled() {
   return Boolean(config.disableCache || process.env.DISABLE_CACHE === 'true');
 }
@@ -56,13 +91,14 @@ async function decryptStreamUrls(streamData, fetchSignal) {
   if (!mod) {
     let wasmBuffer = null;
     if (vs.wasm_url) {
+      const safeWasmUrl = validateWasmUrl(vs.wasm_url);
       const wasmOpts = getStickyFetchOptions('vidsrc', {
         headers: { 'User-Agent': UA },
         signal: fetchSignal || AbortSignal.timeout(TIMEOUT_MS)
       });
-      const wasmRes = await fetch(vs.wasm_url, wasmOpts);
+      const wasmRes = await fetch(safeWasmUrl, wasmOpts);
       if (!wasmRes.ok) {
-        throw new Error(`Failed to fetch WASM from ${vs.wasm_url} (${wasmRes.status})`);
+        throw new Error(`Failed to fetch WASM from ${safeWasmUrl} (${wasmRes.status})`);
       }
       wasmBuffer = await wasmRes.arrayBuffer();
     } else if (vs.wasm) {
@@ -154,8 +190,9 @@ async function getVidsrcStreams(tmdbId, mediaType = 'movie', season = null, epis
       return [];
     }
 
-    const innerEmbedUrl = vsSrcData.src;
-    const innerOrigin = new URL(innerEmbedUrl).origin;
+    const innerUrl = validatePlayerUrl(vsSrcData.src);
+    const innerEmbedUrl = innerUrl.href;
+    const innerOrigin = innerUrl.origin;
 
     // Step 2: Fetch the inner embed page to retrieve CFG (playerUrl & metaApi)
     const innerPageRes = await stickyFetch(innerEmbedUrl, { Referer: 'https://vidsrc.sh/' });
@@ -178,7 +215,7 @@ async function getVidsrcStreams(tmdbId, mediaType = 'movie', season = null, epis
     }
 
     // Step 3: Fetch player page on inner host to retrieve CONFIG (apiToken, stream endpoint)
-    const playerFullUrl = new URL(cfg.playerUrl, innerOrigin).href;
+    const playerFullUrl = validatePlayerUrl(cfg.playerUrl, innerOrigin).href;
     const playerRes = await stickyFetch(playerFullUrl, { Referer: innerEmbedUrl });
     if (!playerRes.ok) {
       console.warn(`[aura] Player page returned ${playerRes.status}`);
