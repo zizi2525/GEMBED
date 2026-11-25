@@ -6,6 +6,7 @@ const fetch = require('node-fetch');
 const crypto = require('crypto');
 const { validateOriginMiddleware, setCorsHeaders } = require('../utils/origin');
 const { config } = require('../utils/config');
+const { getStickyFetchOptions, isExtractorProxyEnabled } = require('../utils/extractorProxy');
 
 const CACHE_MAX_SIZE = 250;
 const CACHE_MAX_BYTES = 128 * 1024 * 1024; // 128 MB hard RAM cap
@@ -63,8 +64,28 @@ function getCachedSegment(url) {
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
+function extractProxySlot(headers) {
+    if (!headers || typeof headers !== 'object') return null;
+    const raw = headers['X-Proxy-Slot'] ?? headers['x-proxy-slot'];
+    const num = Number(raw);
+    return Number.isFinite(num) && num > 0 ? num : null;
+}
+
+function getUpstreamFetchOptions(targetUrl, headers, baseOptions = {}) {
+    const slot = extractProxySlot(headers);
+    try {
+        const host = new URL(targetUrl).hostname.toLowerCase();
+        if (host.includes('vixsrc') && isExtractorProxyEnabled('vixsrc')) {
+            return getStickyFetchOptions('vixsrc', baseOptions, slot);
+        }
+    } catch { }
+    return baseOptions;
+}
+
 function sanitizeUpstreamHeaders(headers, targetUrl) {
     const upstreamHeaders = { 'User-Agent': DEFAULT_UA, ...headers };
+    delete upstreamHeaders['X-Proxy-Slot'];
+    delete upstreamHeaders['x-proxy-slot'];
     try {
         const host = new URL(targetUrl).hostname.toLowerCase();
         // Upstream Vidzy and MovieBox/OneRoom reject requests containing a third-party Referer / Origin
@@ -89,6 +110,59 @@ function sanitizeUpstreamHeaders(headers, targetUrl) {
     return upstreamHeaders;
 }
 
+function stripRiffChunkTs(raw) {
+    if (!raw || raw.length < 12) return null;
+    if (raw.toString('ascii', 0, 4) !== 'RIFF' || raw.toString('ascii', 8, 12) !== 'WEBP') return null;
+    let off = 12;
+    while (off + 8 <= raw.length) {
+        const size = raw.readUInt32LE(off + 4);
+        const start = off + 8;
+        const end = start + size;
+        if (end > raw.length) return null;
+        if (size >= 189 && raw[start] === 0x47 && raw[start + 188] === 0x47) {
+            return raw.subarray(start, end);
+        }
+        off = end + (size & 1);
+    }
+    return null;
+}
+
+/**
+ * Unwraps PNG / WEBP-shelled MPEG-TS (or fMP4) segments (e.g. MegaPlay 252-byte
+ * PNG header, IEND-appended TS, or RIFF/WEBP EXIF chunk TS). Returns input
+ * untouched for normal TS/MP4/M4S segments.
+ */
+function stripPngWrapper(raw) {
+    if (!raw || raw.length < 16) return raw;
+    const riffTs = stripRiffChunkTs(raw);
+    if (riffTs) return riffTs;
+    if (raw[0] !== 0x89 || raw[1] !== 0x50 || raw[2] !== 0x4e || raw[3] !== 0x47) {
+        return raw;
+    }
+    // Scan for IEND chunk (49 45 4E 44 + 4-byte CRC)
+    let iendStart = -1;
+    for (let i = 8; i <= raw.length - 8; i++) {
+        if (raw[i] === 0x49 && raw[i + 1] === 0x45 && raw[i + 2] === 0x4e && raw[i + 3] === 0x44) {
+            iendStart = i + 8;
+            break;
+        }
+    }
+    if (iendStart >= 0) {
+        for (let p = iendStart; p < raw.length - 188; p++) {
+            if (raw[p] === 0x47 && raw[p + 188] === 0x47) return raw.subarray(p);
+        }
+        for (let p = iendStart; p < raw.length; p++) {
+            if (raw[p] === 0x47) return raw.subarray(p);
+        }
+        if (iendStart < raw.length) return raw.subarray(iendStart);
+    }
+    // MegaPlay / nekostream: fixed 252-byte PNG header before MPEG-TS
+    if (raw.length > 252 + 188 && raw[252] === 0x47 && raw[252 + 188] === 0x47) {
+        return raw.subarray(252);
+    }
+    return raw;
+}
+
 async function prefetchSegment(url, headers) {
     if (isCacheDisabled() || segmentCache.size >= CACHE_MAX_SIZE) return;
     const existing = segmentCache.get(url);
@@ -97,10 +171,10 @@ async function prefetchSegment(url, headers) {
         const reqHeaders = sanitizeUpstreamHeaders(headers, url);
         const resp = await fetch(url, { headers: reqHeaders });
         if (!resp.ok && resp.status !== 206) return;
-        const data = Buffer.from(await resp.arrayBuffer());
+        const data = stripPngWrapper(Buffer.from(await resp.arrayBuffer()));
         const responseHeaders = {};
         resp.headers.forEach((v, k) => responseHeaders[k.toLowerCase()] = v);
-        segmentCache.set(url, { data, headers: responseHeaders, timestamp: Date.now() });
+        setCachedSegment(url, data, responseHeaders);
     } catch (_e) { /* ignore */ }
 }
 
@@ -292,6 +366,19 @@ function resolveChildUrl(line, targetUrl) {
     }
 }
 
+function isDirectVixsrcCdnSegment(absUrl) {
+    try {
+        const u = new URL(absUrl);
+        const host = u.hostname.toLowerCase();
+        return (
+            /^sc-[a-z0-9-]+\./i.test(host) &&
+            u.pathname.includes('/hls/')
+        );
+    } catch {
+        return false;
+    }
+}
+
 function rewriteM3u8(content, targetUrl, baseProxyUrl, headers) {
     const isMaster = /#EXT-X-STREAM-INF/i.test(content);
     const lines = content.split(/\r?\n/);
@@ -355,6 +442,9 @@ function rewriteM3u8(content, targetUrl, baseProxyUrl, headers) {
             const isSubPlaylist = isMaster || /\.m3u8(\?|$)/i.test(abs);
             if (isSubPlaylist) {
                 out.push(`${baseProxyUrl}/m3u8-proxy?u=${encryptTargetUrl(abs)}${headersParam}`);
+            } else if (isDirectVixsrcCdnSegment(abs)) {
+                // VixSrc edge CDN segments (sc-*) allow CORS (*) and don't need /ts-proxy
+                out.push(abs);
             } else {
                 segmentUrls.push(abs);
                 out.push(`${baseProxyUrl}/ts-proxy?u=${encryptTargetUrl(abs)}${headersParam}`);
@@ -385,10 +475,13 @@ function createProxyRoutes(app) {
 
         try {
             const upstreamHeaders = sanitizeUpstreamHeaders(headers, targetUrl);
-            const response = await fetch(targetUrl, {
-                method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-                headers: upstreamHeaders
-            });
+            const response = await fetch(
+                targetUrl,
+                getUpstreamFetchOptions(targetUrl, headers, {
+                    method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+                    headers: upstreamHeaders
+                })
+            );
 
             if (!response.ok) {
                 return res.status(response.status).json({ error: `M3U8 fetch failed: ${response.status}` });
@@ -452,10 +545,13 @@ function createProxyRoutes(app) {
             const upstreamHeaders = sanitizeUpstreamHeaders(headers, targetUrl);
             if (range) upstreamHeaders['Range'] = range;
 
-            const resp = await fetch(targetUrl, {
-                method: req.method === 'HEAD' ? 'HEAD' : 'GET',
-                headers: upstreamHeaders
-            });
+            const resp = await fetch(
+                targetUrl,
+                getUpstreamFetchOptions(targetUrl, headers, {
+                    method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+                    headers: upstreamHeaders
+                })
+            );
 
             if (!resp.ok && resp.status !== 206) {
                 return res.status(resp.status).json({ error: `TS fetch failed: ${resp.status}` });
@@ -484,10 +580,11 @@ function createProxyRoutes(app) {
             const isMp4 = upstreamCT.includes('video/mp4') || targetUrl.toLowerCase().includes('.mp4');
             if (!isCacheDisabled() && !isMp4 && !range && resp.status === 200 && (!cl || parseInt(cl, 10) <= MAX_CACHE_ENTRY_BYTES)) {
                 try {
-                    const buf = Buffer.from(await resp.arrayBuffer());
+                    const buf = stripPngWrapper(Buffer.from(await resp.arrayBuffer()));
                     const responseHeaders = {};
                     resp.headers.forEach((v, k) => responseHeaders[k.toLowerCase()] = v);
                     setCachedSegment(targetUrl, buf, responseHeaders);
+                    res.setHeader('Content-Length', buf.length);
                     return res.send(buf);
                 } catch {
                     // fall back

@@ -594,6 +594,8 @@ export function VidPlayer({
     setPausedAt(0);
     // The previous stream's duration must not leak into the new episode.
     durationRef.current = 0;
+    setDuration(0);
+    if (timeDurationTextRef.current) timeDurationTextRef.current.textContent = "0:00";
   }, [resumeKey]);
 
   const subFileInputRef = useRef<HTMLInputElement>(null);
@@ -672,6 +674,8 @@ export function VidPlayer({
     upNextRef.current = null;
     setUpNext(null);
     durationRef.current = 0;
+    setDuration(0);
+    if (timeDurationTextRef.current) timeDurationTextRef.current.textContent = "0:00";
   }, [currentStream?.url]);
 
   const currentQualityLabel =

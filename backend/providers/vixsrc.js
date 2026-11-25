@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { getStickyAxiosConfig, rotateStickySlot } = require('../utils/extractorProxy');
+const { getStickyAxiosConfig, getCurrentStickySlot, rotateStickySlot } = require('../utils/extractorProxy');
 
 const BASE_URL = 'https://vixsrc.to';
 const VIXSRC_HEADERS = {
@@ -38,13 +38,15 @@ async function fetchEmbedPage(suburl, axiosConfig) {
     }
 }
 
-// Step 3: Extract token, expires, playlist URL from embed HTML
+// Step 3: Extract token, expires, asn, and playlist URL (preferring window.streams with ?ub=1) from embed HTML
 function extractTokenData(html) {
-    const token = html.match(/token["']\s*:\s*["']([^"']+)/)?.[1];
-    const expires = html.match(/expires["']\s*:\s*["']([^"']+)/)?.[1];
-    const playlist = html.match(/url\s*:\s*["']([^"']+)/)?.[1];
+    const token = html.match(/['"]?token['"]?\s*:\s*["']([^"']+)/)?.[1];
+    const expires = html.match(/['"]?expires['"]?\s*:\s*["']([^"']+)/)?.[1];
+    const asn = html.match(/['"]?asn['"]?\s*:\s*["']([^"']*)/)?.[1];
+    const masterUrl = html.match(/url\s*:\s*["']([^"']+)/)?.[1];
+    const streamsMatch = html.match(/window\.streams\s*=\s*(\[[^\]]+\]);/);
 
-    if (!token || !expires || !playlist) return null;
+    if (!token || !expires) return null;
 
     // Reject expired tokens (with 60s grace period)
     if (parseInt(expires, 10) * 1000 - 60_000 < Date.now()) {
@@ -52,14 +54,34 @@ function extractTokenData(html) {
         return null;
     }
 
-    return { token, expires, playlist };
+    let playlistUrl = null;
+    if (streamsMatch) {
+        try {
+            const streams = JSON.parse(streamsMatch[1]);
+            const active = streams.find((s) => s.active) || streams[0];
+            if (active?.url) {
+                playlistUrl = new URL(active.url, BASE_URL);
+            }
+        } catch {}
+    }
+    if (!playlistUrl && masterUrl) {
+        playlistUrl = new URL(masterUrl, BASE_URL);
+        playlistUrl.searchParams.set('ub', '1');
+    }
+    if (!playlistUrl) return null;
+
+    return { token, expires, asn, playlistUrl };
 }
 
-// Step 4: Append token params to master URL
-function buildMasterUrl(tokenData) {
-    const { token, expires, playlist } = tokenData;
-    const sep = playlist.includes('?') ? '&' : '?';
-    return `${playlist}${sep}token=${token}&expires=${expires}&h=1`;
+// Step 4: Append token, expires, asn, and lang params to master URL (do NOT set h=1; it causes 403)
+function buildMasterUrl(tokenData, lang = 'en') {
+    const { token, expires, asn, playlistUrl } = tokenData;
+    const u = new URL(playlistUrl.toString());
+    u.searchParams.set('token', token);
+    u.searchParams.set('expires', expires);
+    if (asn) u.searchParams.set('asn', asn);
+    u.searchParams.set('lang', lang || 'en');
+    return u.toString();
 }
 
 async function getVixsrcStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = null) {
@@ -107,6 +129,8 @@ async function getVixsrcStreams(tmdbId, mediaType = 'movie', seasonNum = null, e
     }
 
     const masterUrl = buildMasterUrl(tokenData);
+    const embedUrl = `${BASE_URL}${apiData.src}`;
+    const usedSlot = getCurrentStickySlot();
     console.log(`[Vixsrc] Step 3 - Master URL: ${masterUrl}`);
 
     // Rotate slot for subsequent requests so traffic is distributed
@@ -124,8 +148,10 @@ async function getVixsrcStreams(tmdbId, mediaType = 'movie', seasonNum = null, e
             serverName: 'Vixsrc',
             type: 'm3u8',
             headers: {
-                Referer: apiUrl,
-                'User-Agent': VIXSRC_HEADERS['User-Agent']
+                Referer: embedUrl,
+                Origin: BASE_URL,
+                'User-Agent': VIXSRC_HEADERS['User-Agent'],
+                'X-Proxy-Slot': String(usedSlot)
             }
         }
     ];

@@ -151,7 +151,11 @@ function rotateStickySlot() {
   stickySlotIndex = (stickySlotIndex + 1) % STICKY_SLOTS.length;
 }
 
-function getStickyProxyUrl(providerName) {
+function getCurrentStickySlot() {
+  return STICKY_SLOTS[stickySlotIndex % STICKY_SLOTS.length];
+}
+
+function getStickyProxyUrl(providerName, slotOverride = null) {
   if (providerName) {
     const rawName = (providerName || '').toLowerCase().trim();
     const envSpecific = process.env[`EXTRACTOR_PROXY_${rawName.toUpperCase()}_URL`];
@@ -164,7 +168,7 @@ function getStickyProxyUrl(providerName) {
   // If using Webshare rotating proxy (-rotate), replace with sticky slot number
   // so multi-step token flows (like Vixsrc) maintain the same IP across steps.
   if (base.includes('-rotate')) {
-    const slot = STICKY_SLOTS[stickySlotIndex % STICKY_SLOTS.length];
+    const slot = slotOverride ?? STICKY_SLOTS[stickySlotIndex % STICKY_SLOTS.length];
     return base.replace('-rotate', `-${slot}`);
   }
 
@@ -172,8 +176,8 @@ function getStickyProxyUrl(providerName) {
 }
 
 const stickyAgentCache = new Map();
-function getStickyAgents(providerName) {
-  const proxyUrl = getStickyProxyUrl(providerName);
+function getStickyAgents(providerName, slotOverride = null) {
+  const proxyUrl = getStickyProxyUrl(providerName, slotOverride);
   if (!proxyUrl) return { httpsAgent: null, httpAgent: null, undiciAgent: null };
   if (!stickyAgentCache.has(proxyUrl)) {
     stickyAgentCache.set(proxyUrl, {
@@ -207,11 +211,11 @@ function getStickyAxiosConfig(providerName, baseConfig = {}) {
  * Generates options for fetch (native global fetch / undici) with a STICKY proxy agent.
  * Ensures multi-step token flows (like Vixsrc / VidSrc) maintain the same IP across steps.
  */
-function getStickyFetchOptions(providerName, baseOptions = {}) {
+function getStickyFetchOptions(providerName, baseOptions = {}, slotOverride = null) {
   if (!isExtractorProxyEnabled(providerName)) {
     return baseOptions;
   }
-  const { httpsAgent, undiciAgent } = getStickyAgents(providerName);
+  const { httpsAgent, undiciAgent } = getStickyAgents(providerName, slotOverride);
   return {
     ...baseOptions,
     agent: baseOptions.agent || httpsAgent,
@@ -225,6 +229,7 @@ module.exports = {
   getAxiosConfig,
   getStickyAxiosConfig,
   getStickyFetchOptions,
+  getCurrentStickySlot,
   rotateStickySlot,
   getFetchOptions,
   fetchWithProxy,
