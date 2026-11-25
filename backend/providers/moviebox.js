@@ -455,9 +455,32 @@ function cleanMovieboxTitle(rawTitle) {
     title = title.slice(0, sPos).trim();
   }
 
+  title = title.replace(/\s+seasons?\s*\d+\s*[-~to]\s*\d+/i, '');
+  title = title.replace(/\s+s\d+\s*[-~to]\s*s?\d+/i, '');
   title = title.replace(/\s+season\s+\d+/i, '');
   title = title.replace(/[_\s\.-]\d{3,4}p$/i, '');
   return title.replace(/[-:_.\s]+$/, '').trim();
+}
+
+function matchesSeason(title = '', targetSeason = 1) {
+  // Check range e.g. S1-S3, S01-S03, S1 - S3, S1~S3, Season 1-3, Seasons 1-3
+  const rangeMatch = title.match(/\bS(\d+)\s*[-~to]\s*S?(\d+)\b/i) ||
+                     title.match(/\bSeasons?\s*(\d+)\s*[-~to]\s*(\d+)\b/i);
+  if (rangeMatch) {
+    const sStart = parseInt(rangeMatch[1], 10);
+    const sEnd = parseInt(rangeMatch[2], 10);
+    return targetSeason >= Math.min(sStart, sEnd) && targetSeason <= Math.max(sStart, sEnd);
+  }
+
+  // Check single season e.g. S1, S01, Season 1
+  const singleMatch = title.match(/\bS(\d+)\b/i) || title.match(/\bSeason\s*(\d+)\b/i);
+  if (singleMatch) {
+    const tagged = parseInt(singleMatch[1], 10);
+    return tagged === targetSeason;
+  }
+
+  // If no season tag exists at all in title, assume subject covers all seasons / season 1
+  return true;
 }
 
 // --- Deprecation Clip Filter from adapt.rs ---
@@ -576,9 +599,7 @@ async function searchExactSubject(tmdbDetails, mediaType, season = 1) {
 
     if (isTv) {
       if (titleExact) {
-        const sMatch = (s.title || '').match(/\bS(\d+)\b|\bSeason\s*(\d+)\b/i);
-        const taggedSeason = sMatch ? parseInt(sMatch[1] || sMatch[2], 10) : 1;
-        if (taggedSeason === season) {
+        if (matchesSeason(s.title, season)) {
           if (/version fran/i.test(s.title) && !bestFrench) {
             bestFrench = s;
           } else if (!bestPrimary) {
@@ -597,11 +618,11 @@ async function searchExactSubject(tmdbDetails, mediaType, season = 1) {
     }
   }
 
-  const primarySubjectId = (bestFrench || bestPrimary)?.subjectId || null;
+  const primarySubjectId = (bestPrimary || bestFrench)?.subjectId || null;
   return {
-    subjectId: primarySubjectId,
-    frenchSubjectId: bestFrench?.subjectId || null,
-    standardSubjectId: bestPrimary?.subjectId || null,
+    subjectId: primarySubjectId ? String(primarySubjectId) : null,
+    frenchSubjectId: bestFrench?.subjectId ? String(bestFrench.subjectId) : null,
+    standardSubjectId: bestPrimary?.subjectId ? String(bestPrimary.subjectId) : null,
   };
 }
 
@@ -625,9 +646,7 @@ async function enrichDubsWithFrench(title, year, isTv, season, currentDubs = [])
       const titleExact = cleanedNorm === targetNorm;
 
       if (isTv) {
-        const sMatch = (s.title || '').match(/\bS(\d+)\b|\bSeason\s*(\d+)\b/i);
-        const taggedSeason = sMatch ? parseInt(sMatch[1] || sMatch[2], 10) : 1;
-        if (titleExact && taggedSeason === season && /version fran/i.test(s.title)) {
+        if (titleExact && matchesSeason(s.title, season) && /version fran/i.test(s.title)) {
           const fDubs = await fetchSubjectDubs(s.subjectId);
           return mergeDubsLists(currentDubs, fDubs);
         }
@@ -644,16 +663,20 @@ async function enrichDubsWithFrench(title, year, isTv, season, currentDubs = [])
 
 // --- Subject Details & Dubs Metadata ---
 async function fetchSubjectDubs(subjectId) {
+  const sid = typeof subjectId === 'object' && subjectId !== null
+    ? String(subjectId.subjectId || subjectId.standardSubjectId || '')
+    : String(subjectId || '');
+  if (!sid) return [];
   try {
-    const data = await executeApi('GET', `/wefeed-mobile-bff/subject-api/get?subjectId=${subjectId}`);
+    const data = await executeApi('GET', `/wefeed-mobile-bff/subject-api/get?subjectId=${sid}`);
     const rawDubs = data?.data?.dubs || [];
-    const hasOriginal = rawDubs.some((d) => d.original || String(d.subjectId) === String(subjectId));
+    const hasOriginal = rawDubs.some((d) => d.original || String(d.subjectId) === sid);
 
     const list = rawDubs.map((d) => {
       const lanName = d.lanName || d.title || 'Original Audio';
       const isSub = d.type === 1 || lanName.toLowerCase().includes('sub');
       return {
-        subjectId: String(d.subjectId || subjectId),
+        subjectId: String(d.subjectId || sid),
         lanName,
         lanCode: normalizeLangCode(d.lanCode || lanName),
         original: Boolean(d.original),
@@ -663,7 +686,7 @@ async function fetchSubjectDubs(subjectId) {
 
     if (!hasOriginal) {
       list.unshift({
-        subjectId: String(subjectId),
+        subjectId: sid,
         lanName: 'Original Audio',
         lanCode: 'en',
         original: true,
@@ -673,7 +696,7 @@ async function fetchSubjectDubs(subjectId) {
 
     return list;
   } catch (e) {
-    return [{ subjectId, lanName: 'Original Audio', lanCode: 'en', original: true, isSub: false }];
+    return [{ subjectId: sid, lanName: 'Original Audio', lanCode: 'en', original: true, isSub: false }];
   }
 }
 
@@ -817,6 +840,9 @@ async function getMovieBoxStreams(tmdbId, mediaType = 'movie', season = 1, episo
   let mapEntry = map[mapKey];
 
   if (mapEntry && mapEntry.subjectId) {
+    if (typeof mapEntry.subjectId === 'object') {
+      mapEntry.subjectId = mapEntry.subjectId.standardSubjectId || mapEntry.subjectId.subjectId;
+    }
     // Check if French dub is missing and can be enriched
     const hasFrench = Array.isArray(mapEntry.dubs) && mapEntry.dubs.some((d) => d.lanCode === 'fr');
     if (!hasFrench && mapEntry.title) {
@@ -933,13 +959,22 @@ async function getMovieBoxStreams(tmdbId, mediaType = 'movie', season = 1, episo
     }
   }
 
-  // 6. Fetch subtitles (prioritize original dub resourceId, fallback to any available)
-  let subtitles = [];
+  // 6. Fetch and merge subtitles across resource candidates (original audio first)
+  const seenSubLangs = new Set();
+  const mergedSubtitles = [];
   resourceIdsToTryCaptions.sort((a, b) => (b.isOriginal ? 1 : 0) - (a.isOriginal ? 1 : 0));
   for (const { subjectId, resourceId } of resourceIdsToTryCaptions) {
-    subtitles = await fetchExtCaptions(subjectId, resourceId);
-    if (subtitles.length > 0) break;
+    const caps = await fetchExtCaptions(subjectId, resourceId);
+    for (const sub of caps) {
+      const code = (sub.lang || sub.label || '').toLowerCase();
+      if (code && !seenSubLangs.has(code)) {
+        seenSubLangs.add(code);
+        mergedSubtitles.push(sub);
+      }
+    }
+    if (mergedSubtitles.length >= 15) break;
   }
+  let subtitles = mergedSubtitles;
 
   // 7. Build StreamItem list with fresh signed URLs
   const identity = getClientIdentity(clientGeo);

@@ -9,6 +9,7 @@ const { listProviders, getProvider, getCookieStats } = require('./providers/regi
 const { createProxyRoutes, processStreamsForProxy } = require('./proxy/proxyServer');
 const { resolveImdbId } = require('./utils/tmdb');
 const { applyFilters, maskStreams, getCodename } = require('./utils/streamFilters');
+const { fetchAniZipMappings } = require('./providers/megaplay');
 const { validateOriginMiddleware } = require('./utils/origin');
 
 const app = express();
@@ -431,6 +432,142 @@ app.get(['/api/moviebox/client-headers', '/api/box/client-headers'], async (req,
   }
 });
 
+// ─── Anime-first aggregate: AniList ID is the primary key ─────────────────────
+// Flow:
+//   1. MegaPlay is called immediately with the AniList ID (no TMDB lookup needed)
+//   2. ani.zip resolves the TMDB ID in parallel
+//   3. All other enabled providers are called with the resolved TMDB ID + forceAnime=true
+//   4. All streams are merged, filtered, proxy-wrapped and returned
+app.get('/api/streams/anime/:anilistId', async (req, res) => {
+  const { anilistId } = req.params;
+  const anilistIdNum = Number(anilistId);
+  if (!anilistIdNum || isNaN(anilistIdNum)) {
+    return res.status(400).json({ success: false, error: 'INVALID_ANILIST_ID' });
+  }
+
+  const episode = req.query.episode ? Number(req.query.episode) : 1;
+  const season  = req.query.season  ? Number(req.query.season)  : 1;
+  const malId   = req.query.malId   ? Number(req.query.malId)   : null;
+  const clientGeo = extractClientGeo(req);
+
+  try {
+    metrics.streamRequests++;
+
+    // 1. Kick off ani.zip mapping to get TMDB ID (runs in parallel with MegaPlay)
+    const aniZipPromise = fetchAniZipMappings('anilist_id', anilistIdNum).catch(() => null);
+
+    // 2. Identify all enabled providers
+    const selectedProviders = config.defaultProviders.length
+      ? config.defaultProviders
+      : listProviders().map(p => p.name);
+
+    const providerTimings = {};
+
+    // 3. Split: MegaPlay runs now (needs only anilistId); others wait for TMDB ID
+    const megaprovider = getProvider('megaplay');
+    const otherProviders = selectedProviders.filter(name => {
+      const p = getProvider(name);
+      return p && p.enabled && name !== 'megaplay';
+    });
+
+    // Run MegaPlay immediately
+    const megaPromise = (megaprovider && megaprovider.enabled) ? (async () => {
+      metrics.providerCalls['megaplay'] = (metrics.providerCalls['megaplay'] || 0) + 1;
+      const t0 = Date.now();
+      try {
+        console.log(`[api/anime] invoking megaplay for anilistId=${anilistIdNum} ep${episode}`);
+        const r = await megaprovider.fetch({
+          tmdbId: anilistIdNum, // passed as fallback; megaplay.js reads ctx.anilistId first
+          type: 'series',
+          season,
+          episode,
+          lang: req.query.lang,
+          clientGeo,
+          anilistId: anilistIdNum,
+          malId,
+          subType: req.query.subType || null,
+          forceAnime: true,
+          filters: {}
+        });
+        providerTimings['megaplay'] = Date.now() - t0;
+        console.log(`[api/anime] megaplay returned ${Array.isArray(r) ? r.length : 0} streams`);
+        return Array.isArray(r) ? r : [];
+      } catch (e) {
+        console.error('[api/anime] megaplay failed:', e.message);
+        providerTimings['megaplay'] = null;
+        return [];
+      }
+    })() : Promise.resolve([]);
+
+    // Wait for ani.zip to get TMDB ID, then run other providers
+    const othersPromise = (async () => {
+      const aniZip = await aniZipPromise;
+      const tmdbId = aniZip?.mappings?.themoviedb_id
+        ? String(aniZip.mappings.themoviedb_id)
+        : null;
+      const imdbId = tmdbId ? await resolveImdbId('tv', tmdbId).catch(() => null) : null;
+
+      if (!tmdbId || !otherProviders.length) return [];
+
+      console.log(`[api/anime] anilistId=${anilistIdNum} → tmdbId=${tmdbId} via ani.zip`);
+
+      const results = await Promise.all(otherProviders.map(async name => {
+        const prov = getProvider(name);
+        if (!prov || !prov.enabled) return [];
+        metrics.providerCalls[name] = (metrics.providerCalls[name] || 0) + 1;
+        const t0 = Date.now();
+        try {
+          console.log(`[api/anime] invoking provider ${name} for tmdbId=${tmdbId}`);
+          const r = await prov.fetch({
+            tmdbId,
+            type: 'series',
+            season,
+            episode,
+            imdbId,
+            lang: req.query.lang,
+            clientGeo,
+            anilistId: anilistIdNum,
+            malId,
+            subType: req.query.subType || null,
+            forceAnime: true,
+            filters: {}
+          });
+          providerTimings[name] = Date.now() - t0;
+          console.log(`[api/anime] provider ${name} returned ${Array.isArray(r) ? r.length : 0} streams`);
+          return Array.isArray(r) ? r : [];
+        } catch (e) {
+          console.error(`[api/anime] provider ${name} failed:`, e.message);
+          providerTimings[name] = null;
+          return [];
+        }
+      }));
+      return results.flat();
+    })();
+
+    // 4. Collect all streams
+    const [megaStreams, otherStreams] = await Promise.all([megaPromise, othersPromise]);
+    let streams = [...megaStreams, ...otherStreams];
+    streams = applyFilters(streams, 'aggregate', config.minQualities, config.excludeCodecs);
+    metrics.streamsReturned += streams.length;
+
+    if (config.enableProxy) {
+      const serverUrl = `${req.protocol}://${req.get('host')}`;
+      streams = processStreamsForProxy(streams, serverUrl);
+    }
+    streams = maskStreams(streams);
+
+    const maskedTimings = {};
+    for (const [k, v] of Object.entries(providerTimings)) {
+      maskedTimings[getCodename(k).toLowerCase()] = v;
+    }
+
+    res.json({ success: true, anilistId: anilistIdNum, count: streams.length, providerTimings: maskedTimings, streams });
+  } catch (e) {
+    metrics.lastError = e.message;
+    res.status(500).json({ success: false, error: 'INTERNAL_ERROR', message: e.message });
+  }
+});
+
 // Aggregate streams across all enabled providers
 app.get('/api/streams/:type/:tmdbId', async (req, res) => {
   const { type, tmdbId } = req.params;
@@ -451,7 +588,20 @@ app.get('/api/streams/:type/:tmdbId', async (req, res) => {
       try {
         console.log(`[api] invoking provider ${name} for tmdbId=${tmdbId}`);
         const t0 = Date.now();
-        const r = await prov.fetch({ tmdbId, type, season, episode, imdbId, lang: req.query.lang, clientGeo, filters: {} });
+        const r = await prov.fetch({
+          tmdbId,
+          type,
+          season,
+          episode,
+          imdbId,
+          lang: req.query.lang,
+          clientGeo,
+          anilistId: req.query.anilistId ? Number(req.query.anilistId) : null,
+          malId: req.query.malId ? Number(req.query.malId) : null,
+          subType: req.query.subType || (req.query.type === 'sub' || req.query.type === 'dub' ? req.query.type : null),
+          forceAnime: req.query.anime === '1' || req.query.anime === 'true',
+          filters: {}
+        });
         providerTimings[name] = Date.now() - t0;
         console.log(`[api] provider ${name} returned ${Array.isArray(r) ? r.length : 0} streams`);
         return r;
@@ -502,7 +652,20 @@ app.get('/api/streams/:provider/:type/:tmdbId', async (req, res) => {
     const t0 = Date.now();
     const codename = getCodename(prov.name);
     const codenameLower = codename.toLowerCase();
-    let streams = await prov.fetch({ tmdbId, type, season, episode, imdbId, lang: req.query.lang, clientGeo, filters: {} });
+    let streams = await prov.fetch({
+      tmdbId,
+      type,
+      season,
+      episode,
+      imdbId,
+      lang: req.query.lang,
+      clientGeo,
+      anilistId: req.query.anilistId ? Number(req.query.anilistId) : null,
+      malId: req.query.malId ? Number(req.query.malId) : null,
+      subType: req.query.subType || (req.query.type === 'sub' || req.query.type === 'dub' ? req.query.type : null),
+      forceAnime: req.query.anime === '1' || req.query.anime === 'true',
+      filters: {}
+    });
     const providerTimings = { [codenameLower]: Date.now() - t0 };
     streams = applyFilters(streams, prov.name, config.minQualities, config.excludeCodecs);
     metrics.streamsReturned += streams.length;

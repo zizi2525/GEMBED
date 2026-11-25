@@ -10,7 +10,9 @@ const providerFunctionMap = {
   'vixsrc.js': 'getVixsrcStreams',
   'vidzy.js': 'getVidzyStreams',
   'moviebox.js': 'getMovieBoxStreams',
-  'castle.js': 'getCastleStreams'
+  'castle.js': 'getCastleStreams',
+  'megaplay.js': 'getMegaplayStreams',
+  'vidsrc.js': 'getVidsrcStreams'
 };
 
 // Stats for debug endpoint
@@ -88,8 +90,8 @@ function createFetchFunction(providerInfo) {
         }
         global.currentRequestConfig = previousConfig || {};
       } else {
-        // Standard provider call (passes lang and clientGeo if supported)
-        result = await module[funcName](ctx.tmdbId, mediaType, ctx.season || null, ctx.episode || null, ctx.lang || null, ctx.clientGeo || null);
+        // Standard provider call (passes lang, clientGeo, and full ctx)
+        result = await module[funcName](ctx.tmdbId, mediaType, ctx.season || null, ctx.episode || null, ctx.lang || null, ctx.clientGeo || null, ctx);
       }
 
       const durationMs = Date.now() - t0;
@@ -148,6 +150,8 @@ function getProvider(name) {
   else if (lower === 'apex') normalized = 'dahmer';
   else if (lower === 'vidy' && !providers.some(p => p.name === 'vidy')) normalized = 'videasy';
   else if (lower === 'vidzt' && !providers.some(p => p.name === 'vidzt')) normalized = 'vidzy';
+  else if (lower === 'mega' || lower === 'megaplay') normalized = 'megaplay';
+  else if (lower === 'vidsrc' || lower === 'vidsrcto' || lower === 'aura') normalized = 'vidsrc';
   const p = providers.find(p => p.name === normalized);
   if (!p) return null;
   return { ...p, enabled: isProviderEnabled(p.name) };

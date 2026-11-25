@@ -1,3 +1,5 @@
+
+
 /**
  * Extractor Proxy Manager for Upstream Scrapers.
  *
@@ -55,7 +57,12 @@ const PROVIDER_ALIASES = {
   castle: ['castle', 'steve'],
   steve: ['castle', 'steve'],
   showbox: ['showbox', 'cloud'],
-  cloud: ['showbox', 'cloud']
+  cloud: ['showbox', 'cloud'],
+  megaplay: ['megaplay', 'mega'],
+  mega: ['megaplay', 'mega'],
+  vidsrc: ['vidsrc', 'vidsrcto', 'aura'],
+  vidsrcto: ['vidsrc', 'vidsrcto', 'aura'],
+  aura: ['vidsrc', 'vidsrcto', 'aura']
 };
 
 /**
@@ -196,11 +203,28 @@ function getStickyAxiosConfig(providerName, baseConfig = {}) {
   };
 }
 
+/**
+ * Generates options for fetch (native global fetch / undici) with a STICKY proxy agent.
+ * Ensures multi-step token flows (like Vixsrc / VidSrc) maintain the same IP across steps.
+ */
+function getStickyFetchOptions(providerName, baseOptions = {}) {
+  if (!isExtractorProxyEnabled(providerName)) {
+    return baseOptions;
+  }
+  const { httpsAgent, undiciAgent } = getStickyAgents(providerName);
+  return {
+    ...baseOptions,
+    agent: baseOptions.agent || httpsAgent,
+    dispatcher: baseOptions.dispatcher || undiciAgent
+  };
+}
+
 module.exports = {
   getExtractorProxyUrl,
   isExtractorProxyEnabled,
   getAxiosConfig,
   getStickyAxiosConfig,
+  getStickyFetchOptions,
   rotateStickySlot,
   getFetchOptions,
   fetchWithProxy,

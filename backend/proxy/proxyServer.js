@@ -512,6 +512,8 @@ function isStreamProxyEnabledFor(providerName, stream) {
         aliases.push('moviebox', 'movibox');
     } else if (name === 'vidy' || name === 'videasy') {
         aliases.push('vidy', 'videasy');
+    } else if (name === 'vidsrc' || name === 'vidsrcto' || name === 'aura') {
+        aliases.push('vidsrc', 'vidsrcto', 'aura');
     }
     const uniqueAliases = [...new Set(aliases)];
 
@@ -559,7 +561,9 @@ function isStreamProxyEnabledFor(providerName, stream) {
     // Provider-specific default behavior matching gibox apps/web/lib/upstream.ts:
     switch (name) {
         case 'vidsrc':
-            return true;
+        case 'vidsrcto':
+        case 'aura':
+            return true; // Enforces strict Referer checks on HLS playlist and segments
         case 'vidy':
         case 'videasy':
             return true; // Vidy CDNs enforce strict Referer/Origin headers and lack CORS

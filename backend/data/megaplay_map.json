@@ -1,0 +1,34 @@
+{
+  "tv:85937:s1": {
+    "title": "Demon Slayer",
+    "anilistId": 101922,
+    "malId": 38000,
+    "season": 1,
+    "source": "ani.zip",
+    "mappedAt": 1795506867166
+  },
+  "movie:372058": {
+    "title": "Your Name.",
+    "anilistId": 21519,
+    "malId": 32281,
+    "season": 0,
+    "source": "ani.zip",
+    "mappedAt": 1795506867862
+  },
+  "tv:1429:s2": {
+    "title": "Attack on Titan Season 2",
+    "anilistId": 20958,
+    "malId": 25777,
+    "season": 2,
+    "source": "ani.zip+anilist",
+    "mappedAt": 1795506868581
+  },
+  "tv:1429:s1": {
+    "title": "Attack on Titan",
+    "anilistId": 16498,
+    "malId": 16498,
+    "season": 1,
+    "source": "ani.zip",
+    "mappedAt": 1795510426936
+  }
+}

@@ -72,7 +72,12 @@ const EXTRACTOR_CODENAMES = {
   castle: 'Steve',
   steve: 'Steve',
   showbox: 'Cloud',
-  cloud: 'Cloud'
+  cloud: 'Cloud',
+  megaplay: 'MegaPlay',
+  mega: 'MegaPlay',
+  vidsrc: 'Aura',
+  vidsrcto: 'Aura',
+  aura: 'Aura'
 };
 
 function getCodename(name) {
