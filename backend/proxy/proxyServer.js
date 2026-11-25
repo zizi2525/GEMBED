@@ -7,12 +7,36 @@ const crypto = require('crypto');
 const { validateOriginMiddleware, setCorsHeaders } = require('../utils/origin');
 const { config } = require('../utils/config');
 
-const CACHE_MAX_SIZE = 2000;
-const CACHE_EXPIRY_MS = 2 * 60 * 60 * 1000; // 2 hours
+const CACHE_MAX_SIZE = 250;
+const CACHE_MAX_BYTES = 128 * 1024 * 1024; // 128 MB hard RAM cap
+const MAX_CACHE_ENTRY_BYTES = 4 * 1024 * 1024; // 4 MB max per cached segment
+const CACHE_EXPIRY_MS = 15 * 60 * 1000; // 15 minutes
 const segmentCache = new Map();
+let segmentCacheBytes = 0;
 
 function isCacheDisabled() {
     return process.env.DISABLE_CACHE === 'true';
+}
+
+function deleteCachedEntry(url) {
+    const entry = segmentCache.get(url);
+    if (!entry) return;
+    segmentCacheBytes = Math.max(0, segmentCacheBytes - (entry.data?.length || 0));
+    segmentCache.delete(url);
+}
+
+function setCachedSegment(url, data, headers) {
+    if (isCacheDisabled() || !data || data.length > MAX_CACHE_ENTRY_BYTES) return;
+    if (segmentCache.has(url)) deleteCachedEntry(url);
+    while (
+        (segmentCache.size >= CACHE_MAX_SIZE || segmentCacheBytes + data.length > CACHE_MAX_BYTES) &&
+        segmentCache.size > 0
+    ) {
+        const oldestKey = segmentCache.keys().next().value;
+        deleteCachedEntry(oldestKey);
+    }
+    segmentCache.set(url, { data, headers, timestamp: Date.now() });
+    segmentCacheBytes += data.length;
 }
 
 function cleanupCache() {
@@ -61,7 +85,7 @@ function sanitizeUpstreamHeaders(headers, targetUrl) {
             // Must send the native Android OneRoom Cronet User-Agent:
             upstreamHeaders['User-Agent'] = 'com.community.oneroom/50020120 (Linux; U; Android 12; en_US; 22101316G; Build/S1B.220414.015; Cronet/135.0.7012.3)';
         }
-    } catch {}
+    } catch { }
     return upstreamHeaders;
 }
 
@@ -152,11 +176,11 @@ function decryptTargetUrl(token) {
     try {
         const plain = Buffer.from(trimmed, 'base64url').toString('utf8');
         if (plain.startsWith('http://') || plain.startsWith('https://')) return plain;
-    } catch {}
+    } catch { }
     try {
         const plain = Buffer.from(trimmed, 'base64').toString('utf8');
         if (plain.startsWith('http://') || plain.startsWith('https://')) return plain;
-    } catch {}
+    } catch { }
 
     // 3. Plain URL fallback
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
@@ -232,12 +256,12 @@ function extractTargetAndHeaders(req) {
             try {
                 const decoded = Buffer.from(req.query.h, 'base64').toString('utf8');
                 headers = JSON.parse(decoded);
-            } catch {}
+            } catch { }
         }
     } else if (req.query.headers) {
         try {
             headers = typeof req.query.headers === 'string' ? JSON.parse(req.query.headers) : req.query.headers;
-        } catch {}
+        } catch { }
     }
 
     return {
@@ -456,13 +480,14 @@ function createProxyRoutes(app) {
                 return res.end();
             }
 
-            // If caching enabled and full segment was fetched, cache it in background
-            if (!isCacheDisabled() && !range && resp.status === 200 && (!cl || parseInt(cl, 10) <= 20 * 1024 * 1024)) {
+            // Only cache small HLS segments (<= 4 MB); stream MP4s/large files directly without buffering in RAM
+            const isMp4 = upstreamCT.includes('video/mp4') || targetUrl.toLowerCase().includes('.mp4');
+            if (!isCacheDisabled() && !isMp4 && !range && resp.status === 200 && (!cl || parseInt(cl, 10) <= MAX_CACHE_ENTRY_BYTES)) {
                 try {
                     const buf = Buffer.from(await resp.arrayBuffer());
                     const responseHeaders = {};
                     resp.headers.forEach((v, k) => responseHeaders[k.toLowerCase()] = v);
-                    segmentCache.set(targetUrl, { data: buf, headers: responseHeaders, timestamp: Date.now() });
+                    setCachedSegment(targetUrl, buf, responseHeaders);
                     return res.send(buf);
                 } catch {
                     // fall back
@@ -612,7 +637,7 @@ function processStreamsForProxy(streams, serverUrl) {
         let host = '';
         try {
             host = new URL(original).hostname.toLowerCase();
-        } catch {}
+        } catch { }
 
         // Direct file hosts routed through ts-proxy, HLS through m3u8-proxy
         const isTs = host.includes('pixeldrain.') || host === 'video-downloads.googleusercontent.com' || host.includes('hakunaymatata.') || host.includes('aoneroom.') || /\.(mp4|mkv)(\?|$)/i.test(original);
