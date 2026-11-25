@@ -6,7 +6,7 @@ const { config, saveConfigPatch, OVERRIDE_PATH } = require('./utils/config');
 const { authenticate, issueSession, requireAuth, getSession, updatePassword } = require('./utils/auth');
 const path = require('path');
 const { listProviders, getProvider, getCookieStats } = require('./providers/registry');
-const { createProxyRoutes, processStreamsForProxy } = require('./proxy/proxyServer');
+const { createProxyRoutes, processStreamsForProxy, getPublicServerUrl } = require('./proxy/proxyServer');
 const { resolveImdbId } = require('./utils/tmdb');
 const { applyFilters, maskStreams, getCodename } = require('./utils/streamFilters');
 const { fetchAniZipMappings } = require('./providers/megaplay');
@@ -19,7 +19,7 @@ const {
 } = require('./utils/turnstile');
 
 const app = express();
-app.set('trust proxy', 1);
+app.set('trust proxy', true);
 
 // Mount proxy routes early so downstream handlers and clients can use them
 if (config.enableProxy !== false) {
@@ -492,13 +492,20 @@ app.get('/api/streams/anime/:anilistId', turnstileMiddleware, async (req, res) =
     const providerTimings = {};
 
     // 3. For anime, use MegaPlay (AniList-first) and Vidzy (mapped via ani.zip -> TMDB) only
+    //    Optional ?provider=mega|nova allows progressive per-provider fetching from the frontend
+    const onlyProvider = typeof req.query.provider === 'string' ? req.query.provider.toLowerCase().trim() : '';
+    const wantMega = !onlyProvider || onlyProvider === 'mega' || onlyProvider === 'megaplay';
+    const wantNova = !onlyProvider || onlyProvider === 'nova' || onlyProvider === 'vidzy';
+
     const ANIME_TMDB_PROVIDERS = new Set(['vidzy']);
-    const megaprovider = getProvider('megaplay');
-    const otherProviders = selectedProviders.filter(name => {
-      if (!ANIME_TMDB_PROVIDERS.has(name)) return false;
-      const p = getProvider(name);
-      return p && p.enabled;
-    });
+    const megaprovider = wantMega ? getProvider('megaplay') : null;
+    const otherProviders = wantNova
+      ? selectedProviders.filter(name => {
+          if (!ANIME_TMDB_PROVIDERS.has(name)) return false;
+          const p = getProvider(name);
+          return p && p.enabled;
+        })
+      : [];
 
     // Run MegaPlay immediately
     const megaPromise = (megaprovider && megaprovider.enabled) ? (async () => {
@@ -581,7 +588,7 @@ app.get('/api/streams/anime/:anilistId', turnstileMiddleware, async (req, res) =
     metrics.streamsReturned += streams.length;
 
     if (config.enableProxy) {
-      const serverUrl = `${req.protocol}://${req.get('host')}`;
+      const serverUrl = getPublicServerUrl(req);
       streams = processStreamsForProxy(streams, serverUrl);
     }
     streams = maskStreams(streams);
@@ -647,7 +654,7 @@ app.get('/api/streams/:type/:tmdbId', turnstileMiddleware, async (req, res) => {
     streams = applyFilters(streams, 'aggregate', config.minQualities, config.excludeCodecs);
     metrics.streamsReturned += streams.length;
     if (config.enableProxy) {
-      const serverUrl = `${req.protocol}://${req.get('host')}`;
+      const serverUrl = getPublicServerUrl(req);
       streams = processStreamsForProxy(streams, serverUrl);
     }
     // Mask stream identities and strip internal properties
@@ -702,7 +709,7 @@ app.get('/api/streams/:provider/:type/:tmdbId', turnstileMiddleware, async (req,
     streams = applyFilters(streams, prov.name, config.minQualities, config.excludeCodecs);
     metrics.streamsReturned += streams.length;
     if (config.enableProxy) {
-      const serverUrl = `${req.protocol}://${req.get('host')}`;
+      const serverUrl = getPublicServerUrl(req);
       streams = processStreamsForProxy(streams, serverUrl);
     }
     streams = maskStreams(streams, { codename });

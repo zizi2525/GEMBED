@@ -779,6 +779,38 @@ export function VidPlayer({
     setFailedIds([]);
     setProbes({});
 
+    let startedPlayback = false;
+    const applyPartialStreams = (partial: { streams: StreamItem[]; imdbId?: string }) => {
+      if (token !== loadTokenRef.current) return;
+      if (partial.imdbId) setResolvedImdbId((prev) => prev || partial.imdbId);
+      if (!partial.streams.length) return;
+
+      if (!startedPlayback) {
+        startedPlayback = true;
+        setLoadingStreams(false);
+        streamsRef.current = partial.streams;
+        setStreams(partial.streams);
+        const best = pickBestStreamIndex(partial.streams, favRef.current, defaultLangRef.current);
+        indexRef.current = best;
+        setSelectedIndex(best);
+        setSwitching(false);
+        playWhenReadyRef.current = autoPlayRef.current;
+        return;
+      }
+
+      // Preserve currently playing stream URL when additional servers finish loading
+      const currentUrl = streamsRef.current[indexRef.current]?.url;
+      streamsRef.current = partial.streams;
+      setStreams(partial.streams);
+      if (currentUrl) {
+        const nextIdx = partial.streams.findIndex((s) => s.url === currentUrl);
+        if (nextIdx >= 0) {
+          indexRef.current = nextIdx;
+          setSelectedIndex(nextIdx);
+        }
+      }
+    };
+
     const result = await fetchStreams({
       type,
       tmdbId,
@@ -788,6 +820,7 @@ export function VidPlayer({
       anime,
       anilistId,
       malId,
+      onProgress: applyPartialStreams,
     });
     if (token !== loadTokenRef.current) return;
 
@@ -802,13 +835,17 @@ export function VidPlayer({
       return;
     }
 
-    streamsRef.current = result.streams;
-    setStreams(result.streams);
-    const best = pickBestStreamIndex(result.streams, favRef.current, defaultLangRef.current);
-    indexRef.current = best;
-    setSelectedIndex(best);
-    setSwitching(false);
-    playWhenReadyRef.current = autoPlayRef.current;
+    if (!startedPlayback) {
+      streamsRef.current = result.streams;
+      setStreams(result.streams);
+      const best = pickBestStreamIndex(result.streams, favRef.current, defaultLangRef.current);
+      indexRef.current = best;
+      setSelectedIndex(best);
+      setSwitching(false);
+      playWhenReadyRef.current = autoPlayRef.current;
+    } else {
+      applyPartialStreams(result);
+    }
   }, [type, tmdbId, curSeason, curEpisode, anime, anilistId, malId]);
 
   useEffect(() => {

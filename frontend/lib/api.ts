@@ -890,6 +890,43 @@ export async function fetchMovieBoxClientHeaders(
   }
 }
 
+const MOVIE_TV_PROVIDERS = ["aura", "box", "steve", "ari", "nova"] as const;
+const ANIME_PROVIDERS = ["mega", "nova"] as const;
+
+async function fetchProviderStreams(
+  replicaBase: string,
+  path: string,
+  headers: Record<string, string>
+): Promise<{ ok: boolean; status: number; streams: StreamItem[]; imdbId?: string; error?: string }> {
+  try {
+    const { status, data } = await fetchJson(`${replicaBase}${path}`, headers);
+    if (status >= 500 || status === 429) {
+      return { ok: false, status, streams: [], error: "The stream service returned an error." };
+    }
+    if (status >= 400) {
+      return {
+        ok: true,
+        status,
+        streams: [],
+        error: status === 404 ? "This title isn't available right now." : undefined,
+      };
+    }
+    const payload = (data || {}) as StreamResponse;
+    const raw = Array.isArray(payload.streams) ? payload.streams : [];
+    return { ok: true, status, streams: raw, imdbId: payload.imdbId };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      streams: [],
+      error:
+        (err as Error)?.name === "AbortError"
+          ? "The stream service took too long to answer."
+          : "Could not reach the stream service.",
+    };
+  }
+}
+
 export async function fetchStreams(input: {
   type: "movie" | "tv";
   tmdbId?: number | string;
@@ -900,8 +937,9 @@ export async function fetchStreams(input: {
   malId?: number | string;
   anime?: boolean;
   subType?: "sub" | "dub";
+  onProgress?: (partial: StreamsResult) => void;
 }): Promise<StreamsResult> {
-  const { type, tmdbId, season, episode, lang, anilistId, malId, anime, subType } = input;
+  const { type, tmdbId, season, episode, lang, anilistId, malId, anime, subType, onProgress } = input;
 
   // Pre-fetch client geolocation so backend MovieBox signatures match the user's actual device & IP
   const geo = await getClientGeo();
@@ -913,26 +951,27 @@ export async function fetchStreams(input: {
   if (lang) params.set("lang", lang);
   if (subType) params.set("subType", subType);
 
-  let apiPath: string;
+  const isAnime = Boolean(anime && anilistId);
+  const providers = isAnime ? ANIME_PROVIDERS : MOVIE_TV_PROVIDERS;
 
-  if (anime && anilistId) {
-    // Anime: use dedicated AniList-first endpoint — no TMDB ID needed in the URL
-    if (episode) params.set("episode", String(episode));
-    if (season) params.set("season", String(season));
-    if (malId) params.set("malId", String(malId));
-    apiPath = `/api/streams/anime/${encodeURIComponent(String(anilistId))}`;
-  } else {
-    // Movie / TV: standard TMDB-based endpoint
+  const buildPath = (prov: string) => {
+    const p = new URLSearchParams(params);
+    if (isAnime) {
+      if (episode) p.set("episode", String(episode));
+      if (season) p.set("season", String(season));
+      if (malId) p.set("malId", String(malId));
+      p.set("provider", prov);
+      return `/api/streams/anime/${encodeURIComponent(String(anilistId))}?${p.toString()}`;
+    }
     const apiType = type === "movie" ? "movie" : "series";
     const targetId = tmdbId || anilistId || 0;
-    if (season) params.set("season", String(season));
-    if (episode) params.set("episode", String(episode));
-    if (anilistId) params.set("anilistId", String(anilistId));
-    if (malId) params.set("malId", String(malId));
-    apiPath = `/api/streams/${apiType}/${encodeURIComponent(String(targetId))}`;
-  }
+    if (season) p.set("season", String(season));
+    if (episode) p.set("episode", String(episode));
+    if (anilistId) p.set("anilistId", String(anilistId));
+    if (malId) p.set("malId", String(malId));
+    return `/api/streams/${prov}/${apiType}/${encodeURIComponent(String(targetId))}?${p.toString()}`;
+  };
 
-  const queryStr = params.toString() ? `?${params.toString()}` : "";
   const turnstileProof = isTurnstileConfigured()
     ? await waitForTurnstileProof(5000)
     : null;
@@ -941,51 +980,54 @@ export async function fetchStreams(input: {
     : {};
 
   const replicas = getOrderedReplicas();
-  let lastError = "";
-
-  for (const replicaBase of replicas) {
-    const started = nowMs();
-    try {
-      const { status, data } = await fetchJson(
-        `${replicaBase}${apiPath}${queryStr}`,
-        reqHeaders
-      );
-
-      if (status >= 500 || status === 429) {
-        // The replica itself is unhealthy — skip it for a while and try the next.
-        noteReplicaFailure(replicaBase);
-        lastError = "The stream service returned an error.";
-        continue;
-      }
-
-      if (status >= 400) {
-        // A valid answer about the title: this replica is fine, don't penalise it.
-        noteReplicaSuccess(replicaBase, nowMs() - started);
-        lastError =
-          status === 404
-            ? "This title isn't available right now."
-            : "The stream service returned an error.";
-        continue;
-      }
-
-      noteReplicaSuccess(replicaBase, nowMs() - started);
-
-      const payload = (data || {}) as StreamResponse;
-      const raw = Array.isArray(payload.streams) ? payload.streams : [];
-      return {
-        streams: normalizeStreams(raw),
-        imdbId: payload.imdbId,
-      };
-    } catch (err) {
-      noteReplicaFailure(replicaBase);
-      lastError =
-        (err as Error)?.name === "AbortError"
-          ? "The stream service took too long to answer."
-          : "Could not reach the stream service.";
-    }
+  const replicaBase = replicas[0];
+  if (!replicaBase) {
+    return { streams: [], error: "No stream servers configured." };
   }
 
-  return { streams: [], error: lastError || "No stream servers responded." };
+  const accumulatedRaw: StreamItem[] = [];
+  let resolvedImdbId: string | undefined;
+  let lastError = "";
+  let anySucceeded = false;
+
+  const startedAll = nowMs();
+  await Promise.all(
+    providers.map(async (prov) => {
+      const path = buildPath(prov);
+      const res = await fetchProviderStreams(replicaBase, path, reqHeaders);
+      if (res.ok) {
+        anySucceeded = true;
+        if (res.imdbId && !resolvedImdbId) resolvedImdbId = res.imdbId;
+        if (res.streams.length > 0) {
+          accumulatedRaw.push(...res.streams);
+          if (onProgress) {
+            onProgress({
+              streams: normalizeStreams(accumulatedRaw),
+              imdbId: resolvedImdbId,
+            });
+          }
+        }
+      } else if (res.error) {
+        lastError = res.error;
+      }
+    })
+  );
+
+  if (anySucceeded) {
+    noteReplicaSuccess(replicaBase, nowMs() - startedAll);
+  } else {
+    noteReplicaFailure(replicaBase);
+  }
+
+  const finalStreams = normalizeStreams(accumulatedRaw);
+  if (finalStreams.length > 0) {
+    return { streams: finalStreams, imdbId: resolvedImdbId };
+  }
+  return {
+    streams: [],
+    imdbId: resolvedImdbId,
+    error: lastError || "No stream servers responded.",
+  };
 }
 
 /**

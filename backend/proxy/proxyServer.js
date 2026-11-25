@@ -462,6 +462,25 @@ function rewriteM3u8(content, targetUrl, baseProxyUrl, headers) {
     return out.join('\n');
 }
 
+function getPublicServerUrl(req) {
+    const envUrl = (process.env.BACKEND_PUBLIC_URL || '').trim().replace(/\/$/, '');
+    if (envUrl) return envUrl;
+
+    const host = (req.headers['x-forwarded-host'] || req.get('host') || 'localhost').split(',')[0].trim();
+    const fwdProto = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+    let cfScheme = '';
+    if (req.headers['cf-visitor']) {
+        try {
+            cfScheme = JSON.parse(String(req.headers['cf-visitor'])).scheme || '';
+        } catch { }
+    }
+    const isLocalHost = /^(localhost|127\.0\.0\.1|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)(:|$)/i.test(host);
+    const proto = (fwdProto === 'https' || cfScheme === 'https' || req.secure || req.protocol === 'https' || !isLocalHost)
+        ? 'https'
+        : (fwdProto || req.protocol || 'http');
+    return `${proto}://${host}`;
+}
+
 function createProxyRoutes(app) {
     const originGuard = validateOriginMiddleware({
         getAllowedOrigins: () => config.allowedOrigins,
@@ -495,8 +514,7 @@ function createProxyRoutes(app) {
             }
 
             const text = await response.text();
-            const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-            const baseProxyUrl = `${protocol}://${req.get('host')}`;
+            const baseProxyUrl = getPublicServerUrl(req);
             const rewritten = rewriteM3u8(text, targetUrl, baseProxyUrl, headers);
             res.send(rewritten);
         } catch (e) {
@@ -784,6 +802,7 @@ module.exports = {
     createProxyRoutes,
     processStreamsForProxy,
     isStreamProxyEnabledFor,
+    getPublicServerUrl,
     encryptTargetUrl,
     decryptTargetUrl
 };
